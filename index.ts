@@ -30,6 +30,7 @@ type WorkflowPhase =
 let currentPhase: WorkflowPhase = "idle";
 let activeGoalDocument: string | null = null;
 let projectContext: string = "";
+let projectContextPath: string | null = null;
 
 const STATE_FILE = join(homedir(), ".pi", "jinho-ids-state.json");
 
@@ -37,10 +38,10 @@ const cacheStats: CacheStats = { totalInput: 0, totalCacheRead: 0 };
 
 const activeTools: ActiveTools = { running: new Map() };
 
-async function findJinhoMd(startDir: string): Promise<string | null> {
+async function findIdsMd(startDir: string): Promise<string | null> {
   let dir = startDir;
   while (true) {
-    const candidate = join(dir, "JINHO.md");
+    const candidate = join(dir, "IDS.md");
     try {
       await readFile(candidate, "utf-8");
       return candidate;
@@ -528,8 +529,19 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, _ctx) => {
     const guidance = PHASE_GUIDANCE[currentPhase];
+
+    // Re-read IDS.md every turn so mid-session edits are reflected immediately
+    if (projectContextPath) {
+      try {
+        projectContext = await readFile(projectContextPath, "utf-8");
+      } catch {
+        // file removed mid-session — fall through to IDS_RULES fallback
+        projectContext = "";
+      }
+    }
+
     const contextBlock = projectContext
-      ? `\n\n## Project Context (JINHO.md)\n${projectContext}`
+      ? `\n\n## Project Context (IDS.md)\n${projectContext}`
       : IDS_CONTEXT_BRIEF;
 
     let delegationInfo = "";
@@ -871,16 +883,18 @@ export default function (pi: ExtensionAPI) {
     cacheStats.totalCacheRead = 0;
     activeTools.running.clear();
 
-    // Load project context from JINHO.md (walk up from cwd)
+    // Find IDS.md path (walk up from cwd) — content is re-read every turn in before_agent_start
     try {
-      const jinhoPath = await findJinhoMd(ctx.cwd);
-      if (jinhoPath) {
-        projectContext = await readFile(jinhoPath, "utf-8");
-        ctx.ui.notify(`JINHO.md loaded — project context active (${jinhoPath})`, "info");
+      projectContextPath = await findIdsMd(ctx.cwd);
+      if (projectContextPath) {
+        projectContext = await readFile(projectContextPath, "utf-8");
+        ctx.ui.notify(`IDS.md found — context will refresh every turn (${projectContextPath})`, "info");
       } else {
+        projectContextPath = null;
         projectContext = "";
       }
     } catch {
+      projectContextPath = null;
       projectContext = "";
     }
 
