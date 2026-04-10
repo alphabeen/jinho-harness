@@ -100,17 +100,26 @@ export function augmentAgentWithKarpathy(agent: AgentConfig | undefined): AgentC
   };
 }
 
-export function augmentAgentWithIdsContext(agent: AgentConfig | undefined): AgentConfig | undefined {
+/** Inject a dynamic context string (from JINHO.md or fallback IDS_RULES). */
+export function augmentAgentWithContext(agent: AgentConfig | undefined, context: string): AgentConfig | undefined {
   if (!agent) return agent;
   return {
     ...agent,
-    systemPrompt: agent.systemPrompt + IDS_RULES,
+    systemPrompt: agent.systemPrompt + `\n\n## Project Context\n${context}`,
   };
 }
 
-/** Augment with both Karpathy rules AND IDS context. Used for discipline agents. */
+/** Karpathy rules + dynamic context. Used for discipline agents (worker, plan-worker). */
+export function augmentAgentWithBoth(agent: AgentConfig | undefined, context: string): AgentConfig | undefined {
+  return augmentAgentWithKarpathy(augmentAgentWithContext(agent, context));
+}
+
+// Legacy aliases kept for compatibility
+export function augmentAgentWithIdsContext(agent: AgentConfig | undefined): AgentConfig | undefined {
+  return augmentAgentWithContext(agent, IDS_RULES);
+}
 export function augmentAgentForIds(agent: AgentConfig | undefined): AgentConfig | undefined {
-  return augmentAgentWithKarpathy(augmentAgentWithIdsContext(agent));
+  return augmentAgentWithBoth(agent, IDS_RULES);
 }
 
 export function getSlopCleanerTask(): string {

@@ -17,7 +17,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { microcompactMessages, getCompactionPrompt, formatCompactSummary } from "./compaction.js";
 import { convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
 import { complete } from "@mariozechner/pi-ai";
-import { isDisciplineAgent, augmentAgentForIds, augmentAgentWithIdsContext, getSlopCleanerTask } from "./discipline.js";
+import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, IDS_RULES, getSlopCleanerTask } from "./discipline.js";
 import { fetchUrlToMarkdown } from "./webfetch/utils.js";
 import { renderWebfetchCall, renderWebfetchResult } from "./webfetch/render.js";
 
@@ -29,12 +29,27 @@ type WorkflowPhase =
 
 let currentPhase: WorkflowPhase = "idle";
 let activeGoalDocument: string | null = null;
+let projectContext: string = "";
 
 const STATE_FILE = join(homedir(), ".pi", "jinho-ids-state.json");
 
 const cacheStats: CacheStats = { totalInput: 0, totalCacheRead: 0 };
 
 const activeTools: ActiveTools = { running: new Map() };
+
+async function findJinhoMd(startDir: string): Promise<string | null> {
+  let dir = startDir;
+  while (true) {
+    const candidate = join(dir, "JINHO.md");
+    try {
+      await readFile(candidate, "utf-8");
+      return candidate;
+    } catch { /* not here */ }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -200,9 +215,10 @@ export default function (pi: ExtensionAPI) {
           for (let i = 0; i < chain.length; i++) {
             const step = chain[i];
             const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
-            const chainAgent = isDisciplineAgent(step.agent)
-              ? augmentAgentForIds(findAgent(step.agent))
-              : augmentAgentWithIdsContext(findAgent(step.agent));
+            const ctx_ = projectContext || IDS_RULES;
+              const chainAgent = isDisciplineAgent(step.agent)
+              ? augmentAgentWithBoth(findAgent(step.agent), ctx_)
+              : augmentAgentWithContext(findAgent(step.agent), ctx_);
             const result = await runAgent({
               agent: chainAgent,
               agentName: step.agent,
@@ -266,9 +282,10 @@ export default function (pi: ExtensionAPI) {
           let results: SingleResult[];
           try {
             results = await mapWithConcurrencyLimit(tasks, MAX_CONCURRENCY, async (t, index) => {
+              const pCtx = projectContext || IDS_RULES;
               const parallelAgent = isDisciplineAgent(t.agent)
-                ? augmentAgentForIds(findAgent(t.agent))
-                : augmentAgentWithIdsContext(findAgent(t.agent));
+                ? augmentAgentWithBoth(findAgent(t.agent), pCtx)
+                : augmentAgentWithContext(findAgent(t.agent), pCtx);
               const result = await runAgent({
                 agent: parallelAgent,
                 agentName: t.agent,
@@ -319,9 +336,10 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
+          const sCtx = projectContext || IDS_RULES;
           const singleAgent = isDisciplineAgent(agent)
-            ? augmentAgentForIds(findAgent(agent))
-            : augmentAgentWithIdsContext(findAgent(agent));
+            ? augmentAgentWithBoth(findAgent(agent), sCtx)
+            : augmentAgentWithContext(findAgent(agent), sCtx);
           const result = await runAgent({
             agent: singleAgent,
             agentName: agent,
@@ -510,7 +528,9 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, _ctx) => {
     const guidance = PHASE_GUIDANCE[currentPhase];
-    const idsContext = IDS_CONTEXT_BRIEF;
+    const contextBlock = projectContext
+      ? `\n\n## Project Context (JINHO.md)\n${projectContext}`
+      : IDS_CONTEXT_BRIEF;
 
     let delegationInfo = "";
     if (depthConfig.canDelegate) {
@@ -521,7 +541,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     return {
-      systemPrompt: event.systemPrompt + idsContext + (guidance || "") + delegationInfo,
+      systemPrompt: event.systemPrompt + contextBlock + (guidance || "") + delegationInfo,
     };
   });
 
@@ -850,6 +870,19 @@ export default function (pi: ExtensionAPI) {
     cacheStats.totalInput = 0;
     cacheStats.totalCacheRead = 0;
     activeTools.running.clear();
+
+    // Load project context from JINHO.md (walk up from cwd)
+    try {
+      const jinhoPath = await findJinhoMd(ctx.cwd);
+      if (jinhoPath) {
+        projectContext = await readFile(jinhoPath, "utf-8");
+        ctx.ui.notify(`JINHO.md loaded — project context active (${jinhoPath})`, "info");
+      } else {
+        projectContext = "";
+      }
+    } catch {
+      projectContext = "";
+    }
 
     ctx.ui.setHeader((_tui, theme) => {
       const banner = [
