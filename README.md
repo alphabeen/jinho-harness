@@ -1,4 +1,4 @@
-# JINHO — Agentic Coding Harness
+# oh-my-jinho — Agentic Coding Harness
 
 [pi coding agent](https://github.com/badlogic/pi-mono) 확장으로, **clarify → plan → milestone → execute** 워크플로우를 추가합니다.
 
@@ -11,14 +11,14 @@
 ## 설치
 
 ```bash
-pi install git:alphabeen/jinho-harness
+pi install git:alphabeen/oh-my-jinho
 ```
 
 설치 후 `/setup` 실행 (quietStartup 설정).
 
 특정 버전으로 설치:
 ```bash
-pi install git:alphabeen/jinho-harness#v1.0.0
+pi install git:alphabeen/oh-my-jinho#v1.0.0
 ```
 
 ---
@@ -73,7 +73,7 @@ pi install git:alphabeen/jinho-harness#v1.0.0
 ## 동작 방식
 
 ```
-pi --extension ~/.pi/agent/extensions/alphabeen/jinho-harness/index.ts
+pi --extension ~/.pi/agent/extensions/alphabeen/oh-my-jinho/index.ts
 ```
 
 pi가 설치를 관리하므로 `pi install` 이후에는 위 경로를 직접 쓸 필요 없습니다.

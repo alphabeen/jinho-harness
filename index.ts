@@ -874,7 +874,7 @@ export default function (pi: ExtensionAPI) {
         " ╚════╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ",
       ].map(line => theme.bold(theme.fg("accent", line))).join("\n");
 
-      const tagline = theme.fg("dim", "JINHO — Agentic Coding Harness");
+      const tagline = theme.fg("dim", "oh-my-jinho — Agentic Coding Harness");
 
       const tips = [
         "Use /plan to generate a structured implementation plan after clarifying.",
@@ -906,7 +906,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     ctx.ui.notify(
-      "JINHO Harness loaded: /clarify, /plan, /ultraplan, /reset-phase",
+      "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /reset-phase",
       "info"
     );
   });

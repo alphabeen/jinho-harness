@@ -1,7 +1,7 @@
 {
-  "name": "ids-jinho-harness",
+  "name": "oh-my-jinho",
   "version": "1.0.0",
-  "description": "JINHO agentic harness for IDS — clarification, planning, and ultraplan.",
+  "description": "oh-my-jinho agentic harness for IDS — clarification, planning, and ultraplan.",
   "type": "module",
   "scripts": {
     "test": "vitest run",
