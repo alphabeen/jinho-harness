@@ -17,7 +17,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { microcompactMessages, getCompactionPrompt, formatCompactSummary } from "./compaction.js";
 import { convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
 import { complete } from "@mariozechner/pi-ai";
-import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, IDS_RULES, getSlopCleanerTask } from "./discipline.js";
+import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, getSlopCleanerTask } from "./discipline.js";
 import { fetchUrlToMarkdown } from "./webfetch/utils.js";
 import { renderWebfetchCall, renderWebfetchResult } from "./webfetch/render.js";
 
@@ -216,7 +216,7 @@ export default function (pi: ExtensionAPI) {
           for (let i = 0; i < chain.length; i++) {
             const step = chain[i];
             const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
-            const ctx_ = projectContext || IDS_RULES;
+            const ctx_ = projectContext;
               const chainAgent = isDisciplineAgent(step.agent)
               ? augmentAgentWithBoth(findAgent(step.agent), ctx_)
               : augmentAgentWithContext(findAgent(step.agent), ctx_);
@@ -283,7 +283,7 @@ export default function (pi: ExtensionAPI) {
           let results: SingleResult[];
           try {
             results = await mapWithConcurrencyLimit(tasks, MAX_CONCURRENCY, async (t, index) => {
-              const pCtx = projectContext || IDS_RULES;
+              const pCtx = projectContext;
               const parallelAgent = isDisciplineAgent(t.agent)
                 ? augmentAgentWithBoth(findAgent(t.agent), pCtx)
                 : augmentAgentWithContext(findAgent(t.agent), pCtx);
@@ -337,7 +337,7 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          const sCtx = projectContext || IDS_RULES;
+          const sCtx = projectContext;
           const singleAgent = isDisciplineAgent(agent)
             ? augmentAgentWithBoth(findAgent(agent), sCtx)
             : augmentAgentWithContext(findAgent(agent), sCtx);
@@ -478,50 +478,32 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
-  const IDS_CONTEXT_BRIEF = [
-    "\n\n## IDS Project Context",
-    "Project: IDS (Intelligent Deployment System) — AI-driven cloud resource prediction & auto-deployment on Aolda (Ajou OpenStack).",
-    "Stack: Python 3.11, FastAPI, TensorFlow LSTM, MySQL+SQLAlchemy 2.0, Pydantic v2.",
-    "Architecture: 4-layer DDD per service — application/ → domain/ → ports/ → infrastructure/",
-    "Services: planning (plan generation), prediction (LSTM 24h forecast), deployment (OpenStack VM), alerting (Discord).",
-    "Current phase: Phase 0 MVP (4/20) — most service files are TODO stubs referencing mcp_core/ originals.",
-    "Docs live in: docs/adr/, docs/architecture/, docs/runbook/, docs/api/",
-  ].join("\n");
-
   const PHASE_GUIDANCE: Record<WorkflowPhase, string> = {
     idle: "",
     clarifying: [
-      "\n\n## Active Workflow: Clarification (IDS)",
+      "\n\n## Active Workflow: Clarification",
       "You are in agentic-clarification mode. Follow the agentic-clarification skill rules strictly:",
       "- Ask ONE question per message using the ask_user_question tool.",
-      "- Generate questions and choices dynamically — consider IDS domain boundaries (planning/prediction/deployment/alerting).",
-      "- Use the subagent tool with agent 'explorer' to investigate the IDS codebase in parallel.",
-      "  - Look in services/<domain>/domain/ for existing entities and policies.",
-      "  - Look in services/<domain>/ports/ to understand current interface contracts.",
-      "  - Check TODO comments for migration references from mcp_core/.",
+      "- Generate questions and choices dynamically based on the task context.",
+      "- Use the subagent tool with agent 'explorer' to investigate the codebase in parallel.",
       "- After each answer, update 'what we've established so far' and assess remaining ambiguity.",
-      "- When ambiguity is resolved, present a Context Brief that includes: affected IDS domain(s), layer impact (application/domain/ports/infrastructure), Phase 0 or Phase 1 scope.",
+      "- When ambiguity is resolved, present a Context Brief.",
       "- Do NOT start implementation. This phase ends with a Context Brief, not code.",
     ].join("\n"),
     planning: [
-      "\n\n## Active Workflow: Plan Crafting (IDS)",
+      "\n\n## Active Workflow: Plan Crafting",
       "You are in agentic-plan-crafting mode. Follow the agentic-plan-crafting skill rules strictly:",
       "- Write an executable implementation plan from the current context.",
       "- Every step must be executable — no placeholders like 'implement the service'.",
-      "- For each step, identify: which layer (application/domain/ports/infrastructure), which service domain, which files.",
-      "- Respect layer rules: domain/ must stay pure (no I/O), ports/ changes require all infrastructure/ implementations updated.",
-      "- If migrating from mcp_core/, note the source file path and what must change.",
+      "- For each step, identify: which files, which modules, what changes.",
       "- Use ask_user_question if you need to resolve any remaining ambiguity.",
       "- End with a Self-Review before presenting the plan.",
     ].join("\n"),
     ultraplanning: [
-      "\n\n## Active Workflow: Milestone Planning — Ultraplan (IDS)",
+      "\n\n## Active Workflow: Milestone Planning — Ultraplan",
       "You are in agentic-milestone-planning mode. Follow the agentic-milestone-planning skill rules strictly:",
       "- Compose a Problem Brief from the current context.",
-      "- Frame milestones around IDS service domains and development phases (Phase 0 Critical → Phase 1 High).",
       "- Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.",
-      "- reviewer-architecture must validate 4-layer DDD compliance in each milestone.",
-      "- reviewer-risk must flag any OpenStack integration risk or ML model assumption risk.",
       "- Synthesize all reviewer findings into a milestone DAG.",
       "- Use ask_user_question if you need user input on trade-offs.",
     ].join("\n"),
@@ -535,14 +517,13 @@ export default function (pi: ExtensionAPI) {
       try {
         projectContext = await readFile(projectContextPath, "utf-8");
       } catch {
-        // file removed mid-session — fall through to IDS_RULES fallback
         projectContext = "";
       }
     }
 
     const contextBlock = projectContext
       ? `\n\n## Project Context (IDS.md)\n${projectContext}`
-      : IDS_CONTEXT_BRIEF;
+      : "";
 
     let delegationInfo = "";
     if (depthConfig.canDelegate) {
@@ -709,8 +690,8 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("JINHO", "Clarification in progress...");
 
       const prompt = topic
-        ? `The user wants to clarify the following IDS task: "${topic}"\n\nBegin the agentic-clarification process for IDS. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool.\n- Use the subagent tool with agent 'explorer' to investigate the relevant IDS service domain in parallel (check services/<domain>/domain/, ports/, and TODO stubs).\n- Determine which phase (0/1/2) this belongs to and which layers are affected.`
-        : `The user wants to start an agentic-clarification session for their current IDS task.\n\nBegin the agentic-clarification process for IDS. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool to understand what the user wants to accomplish.\n- Use the subagent tool with agent 'explorer' to investigate the IDS codebase in parallel (services/, libs/, ml/, docs/).\n- Determine which service domain (planning/prediction/deployment/alerting) and which layer (application/domain/ports/infrastructure) is involved.`;
+        ? `The user wants to clarify the following task: "${topic}"\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool.\n- Use the subagent tool with agent 'explorer' to investigate the relevant codebase area in parallel.\n- Build up a clear Context Brief.`
+        : `The user wants to start an agentic-clarification session.\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool to understand what the user wants to accomplish.\n- Use the subagent tool with agent 'explorer' to investigate the codebase in parallel.\n- Build up a clear Context Brief.`;
 
       pi.sendUserMessage(prompt);
     },
@@ -732,8 +713,8 @@ export default function (pi: ExtensionAPI) {
 
       const topic = args?.trim() || "";
       const prompt = topic
-        ? `Create an executable IDS implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- Each step must specify: file path, layer (application/domain/ports/infrastructure), service domain.\n- Flag any port interface changes — those require updating all infrastructure/ implementations.\n- Note any TODO stubs from mcp_core/ that this plan migrates.\n- Assign each step to Phase 0 (4/20 MVP) or Phase 1 (5/15).`
-        : `Create an executable IDS implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm: which service domain, which layer, Phase 0 or Phase 1.\n- Each step must be concrete — no 'implement the service' placeholders.\n- Respect 4-layer DDD: domain/ stays pure, ports/ changes cascade to infrastructure/.`;
+        ? `Create an executable implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- Each step must specify: exact file path, what changes, why.\n- Every step must be concrete — no placeholders like 'implement the service'.`
+        : `Create an executable implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm scope and approach.\n- Each step must be concrete — no placeholders.\n- End with a Self-Review.`;
 
       pi.sendUserMessage(prompt);
     },
@@ -755,8 +736,8 @@ export default function (pi: ExtensionAPI) {
 
       const topic = args?.trim() || "";
       const prompt = topic
-        ? `Decompose the following IDS task into milestones: "${topic}"\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify which IDS service domains are affected and what the Phase 0/1/2 boundary is.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n   - reviewer-architecture: validate 4-layer DDD compliance per milestone.\n   - reviewer-risk: flag OpenStack integration risk and ML model assumption risk.\n3. Synthesize findings into a milestone DAG aligned with IDS phases.`
-        : `Decompose the current IDS task into milestones.\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify which IDS service domains (planning/prediction/deployment/alerting) are involved and what Phase (0/1/2) the work targets.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize their findings into a milestone DAG aligned with IDS development phases.`;
+        ? `Decompose the following task into milestones: "${topic}"\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify which parts of the codebase are affected.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize findings into a milestone DAG.`
+        : `Decompose the current task into milestones.\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify the scope and affected components.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize their findings into a milestone DAG.`;
 
       pi.sendUserMessage(prompt);
     },
@@ -829,21 +810,6 @@ export default function (pi: ExtensionAPI) {
     handler: setupHandler,
   });
 
-  pi.registerCommand("ids-phase", {
-    description: "Show IDS development phase status and what's TODO in Phase 0 / Phase 1",
-    handler: async (_args, ctx) => {
-      ctx.ui.setStatus("JINHO", "Checking IDS phase status...");
-      pi.sendUserMessage(
-        `Summarize the current IDS development phase status by reading the codebase.\n\n` +
-        `1. Use the subagent tool with agent 'explorer' to scan for TODO stubs in services/ — count how many files per domain (planning/prediction/deployment/alerting) still have # TODO.\n` +
-        `2. Report Phase 0 (MVP 4/20) critical items (C-1~C-5) completion status based on file content.\n` +
-        `3. List what's done vs. still TODO per service domain.\n` +
-        `4. Estimate Phase 0 readiness as a percentage.\n\n` +
-        `Format as a concise status table.`
-      );
-    },
-  });
-
   pi.registerCommand("reset-phase", {
     description: "Reset the workflow phase to idle (clears clarify/plan/ultraplan mode)",
     handler: async (_args, ctx) => {
@@ -908,7 +874,7 @@ export default function (pi: ExtensionAPI) {
         " ╚════╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ",
       ].map(line => theme.bold(theme.fg("accent", line))).join("\n");
 
-      const tagline = theme.fg("dim", "IDS — Intelligent Deployment System");
+      const tagline = theme.fg("dim", "JINHO — Agentic Coding Harness");
 
       const tips = [
         "Use /plan to generate a structured implementation plan after clarifying.",
@@ -940,7 +906,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     ctx.ui.notify(
-      "JINHO Harness (IDS) loaded: /clarify, /plan, /ultraplan, /ids-phase, /reset-phase",
+      "JINHO Harness loaded: /clarify, /plan, /ultraplan, /reset-phase",
       "info"
     );
   });
