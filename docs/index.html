@@ -17,6 +17,7 @@
         <nav>
           <a href="#install">설치</a>
           <a href="#quickstart">빠른 시작</a>
+          <a href="#skills">스킬 안내</a>
           <a href="#commands">핵심 커맨드</a>
           <a href="#faq">FAQ</a>
           <a href="https://github.com/alphabeen/oh-my-jinho" target="_blank" rel="noreferrer">GitHub</a>
@@ -65,6 +66,85 @@
           <li><input type="checkbox" disabled /> /clarify로 범위 확정</li>
           <li><input type="checkbox" disabled /> /plan으로 실행 계획 확보</li>
         </ul>
+      </section>
+
+      <section id="skills" class="section container">
+        <h2>실무형 스킬 안내 (Option 3)</h2>
+        <p class="subtitle">추천 흐름: clarify → plan → systematic-debugging → simplify → review</p>
+
+        <div class="skill-grid">
+          <article class="skill-card">
+            <h3>1) agentic-clarification</h3>
+            <p><strong>언제:</strong> 요구사항이 모호할 때</p>
+            <p><strong>산출물:</strong> 실행 가능한 Context Brief</p>
+            <p><strong>핵심:</strong> 질문 1개씩 + 병렬 탐색으로 범위를 고정</p>
+          </article>
+
+          <article class="skill-card">
+            <h3>2) agentic-plan-crafting</h3>
+            <p><strong>언제:</strong> 구현 전에 작업 순서를 확정할 때</p>
+            <p><strong>산출물:</strong> 의존성/검증이 명시된 실행 계획</p>
+            <p><strong>핵심:</strong> 플레이스홀더 없는 태스크 단위 계획</p>
+          </article>
+
+          <article class="skill-card">
+            <h3>3) agentic-systematic-debugging</h3>
+            <p><strong>언제:</strong> 버그/테스트 실패 원인 분석이 필요할 때</p>
+            <p><strong>산출물:</strong> 재현-원인-수정-검증 체인</p>
+            <p><strong>핵심:</strong> 원인 고정 전 섣부른 수정 금지</p>
+          </article>
+
+          <article class="skill-card">
+            <h3>4) agentic-simplify</h3>
+            <p><strong>언제:</strong> 변경 후 코드 품질/중복을 정리할 때</p>
+            <p><strong>산출물:</strong> 리뷰 반영된 간결한 변경셋</p>
+            <p><strong>핵심:</strong> 병렬 리뷰 후 최소 수정으로 정리</p>
+          </article>
+
+          <article class="skill-card">
+            <h3>5) agentic-review-work</h3>
+            <p><strong>언제:</strong> 구현 완료 후 독립 검증이 필요할 때</p>
+            <p><strong>산출물:</strong> PASS/FAIL 리뷰 문서</p>
+            <p><strong>핵심:</strong> 실행 맥락 없이 계획/코드만으로 검증</p>
+          </article>
+        </div>
+
+        <div class="skill-flow">
+          <h3>추천 사용 순서</h3>
+          <p><code>/clarify</code> → <code>/plan</code> → (이슈 발생 시) <code>systematic-debugging</code> → <code>simplify</code> → <code>review-work</code></p>
+        </div>
+
+        <div class="callout skill-tip">
+          <strong>실패 방지 팁:</strong> 요청이 애매하면 바로 구현하지 말고 <code>/clarify</code>부터 시작하세요.
+          그다음 <code>/plan</code>으로 파일/검증 범위를 잠그면 재작업을 크게 줄일 수 있습니다.
+        </div>
+
+        <details class="skill-detail">
+          <summary>상세: Clarification 구현 포인트</summary>
+          <ul>
+            <li>한 번에 질문 하나</li>
+            <li>코드베이스 병렬 탐색 결과를 Context Brief로 통합</li>
+            <li>모호성 해소 전 구현 금지</li>
+          </ul>
+        </details>
+
+        <details class="skill-detail">
+          <summary>상세: Plan Crafting 구현 포인트</summary>
+          <ul>
+            <li>정확한 파일 경로와 명령 포함</li>
+            <li>병렬 가능/의존 관계 명시</li>
+            <li>최종 검증 태스크 필수</li>
+          </ul>
+        </details>
+
+        <details class="skill-detail">
+          <summary>상세: Debugging / Simplify / Review 포인트</summary>
+          <ul>
+            <li>Debugging: 재현 → 증거 → 단일 원인 가설 → 검증</li>
+            <li>Simplify: 변경분 중심 재사용/품질/효율 정리</li>
+            <li>Review: 독립 시점 PASS/FAIL로 완료 품질 확인</li>
+          </ul>
+        </details>
       </section>
 
       <section id="commands" class="section container">
