@@ -108,3 +108,33 @@ summary { cursor: pointer; font-weight: 800; }
 @media (max-width: 760px) {
   .nav { align-items: flex-start; gap: 8px; flex-direction: column; }
 }
+
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.checklist li {
+  border: 2px solid #000;
+  background: #fff;
+  padding: 10px;
+  font-weight: 700;
+}
+
+.checklist input {
+  margin-right: 8px;
+}
+
+.hero .subtitle {
+  word-break: keep-all;
+}
+
+.section p,
+.section li,
+.section td,
+.section summary {
+  word-break: keep-all;
+}

@@ -10,10 +10,12 @@
 
 ## 웹사이트
 
-설치/빠른 시작 중심 페이지:
+한국어 설치/빠른 시작 페이지:
 
 - GitHub Pages: `https://alphabeen.github.io/oh-my-jinho/`
 - 로컬 미리보기: `docs/index.html` 직접 열기
+
+> 영어 토글/이중언어 페이지는 다음 배치에서 추가합니다.
 
 ---
 
