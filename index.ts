@@ -1,16 +1,25 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { keyHint, keyText, rawKeyHint } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { keyHint, keyText, rawKeyHint, SessionManager } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { JinhoFooter, type CacheStats, type ActiveTools } from "./footer.js";
 import { homedir } from "os";
-import { join, dirname } from "path";
+import { join, dirname, relative, basename } from "path";
 import { fileURLToPath } from "url";
 import { discoverAgents } from "./agents.js";
 import { runAgent, mapWithConcurrencyLimit, MAX_CONCURRENCY, MAX_PARALLEL_TASKS, resolveDepthConfig, getCycleViolations } from "./subagent.js";
 import { emptyUsage, isResultError, isResultSuccess, getResultSummaryText, getFinalOutput, type SingleResult, type SubagentDetails } from "./types.js";
 import { renderCall, renderResult } from "./render.js";
-import { loadState, updateState } from "./state.js";
+import {
+  DEFAULT_STATE,
+  buildResumePrompt,
+  buildResumeSummary,
+  mergeState,
+  restoreStateFromBranch,
+  type ExtensionState,
+  type WorkflowPhase,
+  SESSION_STATE_ENTRY_TYPE,
+} from "./state.js";
 import { parsePlan } from "./plan-parser.js";
 import { buildValidatorPrompt } from "./validator-template.js";
 import { readFile, writeFile, mkdir } from "fs/promises";
@@ -21,35 +30,100 @@ import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, getSl
 import { fetchUrlToMarkdown } from "./webfetch/utils.js";
 import { renderWebfetchCall, renderWebfetchResult } from "./webfetch/render.js";
 
-type WorkflowPhase =
-  | "idle"
-  | "clarifying"
-  | "planning"
-  | "ultraplanning";
-
-let currentPhase: WorkflowPhase = "idle";
-let activeGoalDocument: string | null = null;
+let workflowState: ExtensionState = { ...DEFAULT_STATE };
+let currentPhase: WorkflowPhase = workflowState.phase;
+let activeGoalDocument: string | null = workflowState.activeGoalDocument;
 let projectContext: string = "";
 let projectContextPath: string | null = null;
-
-const STATE_FILE = join(homedir(), ".pi", "jinho-ids-state.json");
+let agentRunActive = false;
+let assistantMessageCompleted = false;
 
 const cacheStats: CacheStats = { totalInput: 0, totalCacheRead: 0 };
 
 const activeTools: ActiveTools = { running: new Map() };
 
-async function findIdsMd(startDir: string): Promise<string | null> {
+const PROJECT_CONTEXT_CANDIDATES = [
+  "OMJ.md",
+  "IDS.md",
+  "PROJECT_CONTEXT.md",
+  "AGENT_CONTEXT.md",
+];
+
+async function findProjectContextFile(startDir: string): Promise<string | null> {
   let dir = startDir;
   while (true) {
-    const candidate = join(dir, "IDS.md");
-    try {
-      await readFile(candidate, "utf-8");
-      return candidate;
-    } catch { /* not here */ }
+    for (const fileName of PROJECT_CONTEXT_CANDIDATES) {
+      const candidate = join(dir, fileName);
+      try {
+        await readFile(candidate, "utf-8");
+        return candidate;
+      } catch {
+        // keep searching
+      }
+    }
+
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+function syncWorkflowGlobals(state: ExtensionState): void {
+  workflowState = state;
+  currentPhase = state.phase;
+  activeGoalDocument = state.activeGoalDocument;
+}
+
+function persistWorkflowState(pi: ExtensionAPI, partial: Partial<ExtensionState>): ExtensionState {
+  const next = mergeState(workflowState, {
+    ...partial,
+    lastUpdatedAt: partial.lastUpdatedAt ?? new Date().toISOString(),
+  });
+  next.resumeSummary = buildResumeSummary(next);
+  syncWorkflowGlobals(next);
+  pi.appendEntry(SESSION_STATE_ENTRY_TYPE, next);
+  return next;
+}
+
+function restoreWorkflowState(ctx: ExtensionContext): ExtensionState {
+  const restored = restoreStateFromBranch(ctx);
+  syncWorkflowGlobals(restored);
+  return restored;
+}
+
+function makeSessionName(prefix: string, topic: string): string {
+  const cleaned = topic.replace(/\s+/g, " ").trim();
+  const short = cleaned.length > 64 ? `${cleaned.slice(0, 61)}...` : cleaned;
+  return `${prefix}: ${short}`;
+}
+
+function toWorkspaceKey(cwd: string): string {
+  return cwd?.trim() || "(unknown workspace)";
+}
+
+function formatTimestamp(date: Date): string {
+  return Number.isNaN(date.getTime()) ? "unknown time" : date.toLocaleString();
+}
+
+function formatSessionChoice(
+  session: { name?: string; firstMessage: string; modified: Date; id: string; path: string },
+  currentSessionPath?: string,
+): string {
+  const title = (session.name || session.firstMessage || "(untitled session)").replace(/\s+/g, " ").trim();
+  const shortTitle = title.length > 72 ? `${title.slice(0, 69)}...` : title;
+  const current = currentSessionPath && session.path === currentSessionPath ? " [current]" : "";
+  return `${formatTimestamp(session.modified)} — ${shortTitle}${current} — ${session.id.slice(0, 8)}`;
+}
+
+function describeInterruptReason(reason: string | null): string {
+  if (!reason) return "interrupted";
+  return reason.replace(/_/g, " ");
+}
+
+function getResumePromptForState(state: ExtensionState): string | null {
+  const prompt = buildResumePrompt(state);
+  if (!prompt) return null;
+  return prompt;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -512,7 +586,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, _ctx) => {
     const guidance = PHASE_GUIDANCE[currentPhase];
 
-    // Re-read IDS.md every turn so mid-session edits are reflected immediately
+    // Re-read project context every turn so mid-session edits are reflected immediately
     if (projectContextPath) {
       try {
         projectContext = await readFile(projectContextPath, "utf-8");
@@ -521,8 +595,9 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
+    const contextLabel = projectContextPath ? basename(projectContextPath) : "context";
     const contextBlock = projectContext
-      ? `\n\n## Project Context (IDS.md)\n${projectContext}`
+      ? `\n\n## Project Context (${contextLabel})\n${projectContext}`
       : "";
 
     let delegationInfo = "";
@@ -648,29 +723,52 @@ export default function (pi: ExtensionAPI) {
         phase?: string;
         activeGoalDocument?: string | null;
       };
-      if (details.phase) currentPhase = details.phase as WorkflowPhase;
-      if (details.activeGoalDocument !== undefined) {
-        activeGoalDocument = details.activeGoalDocument;
-      }
+      syncWorkflowGlobals(mergeState(workflowState, {
+        phase: (details.phase as WorkflowPhase | undefined) ?? workflowState.phase,
+        activeGoalDocument:
+          details.activeGoalDocument !== undefined
+            ? details.activeGoalDocument
+            : workflowState.activeGoalDocument,
+      }));
     }
   });
 
   const GOAL_DOC_PATTERN = /^docs\/(adr|architecture|runbook|api)\//;
 
-  pi.on("tool_result", async (event, _ctx) => {
-    if (currentPhase === "idle") return;
-
+  pi.on("tool_result", async (event, ctx) => {
     const toolName = event.toolName;
+
+    if (toolName === "subagent" && event.isError) {
+      const details = event.details as SubagentDetails | undefined;
+      const aborted = details?.results?.some((result) => result.stopReason === "aborted");
+      if (aborted) {
+        persistWorkflowState(pi, {
+          interrupted: true,
+          interruptedReason: "subagent_aborted",
+          interruptedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    if (currentPhase === "idle") return;
     if (toolName !== "write" && toolName !== "edit") return;
 
     const filePath = event.input.path as string | undefined;
     if (!filePath) return;
 
-    const relativePath = filePath.replace(/^.*?docs\//, "docs/");
+    const relativePath = relative(ctx.cwd, filePath).replace(/\\/g, "/");
+    const nextPartial: Partial<ExtensionState> = {
+      lastArtifactPath: relativePath,
+      interrupted: false,
+      interruptedReason: null,
+      interruptedAt: null,
+    };
+
     if (GOAL_DOC_PATTERN.test(relativePath)) {
-      activeGoalDocument = relativePath;
-      updateState(STATE_FILE, { activeGoalDocument: relativePath }).catch(() => {});
+      nextPartial.activeGoalDocument = relativePath;
     }
+
+    persistWorkflowState(pi, nextPartial);
   });
 
   pi.registerCommand("clarify", {
@@ -684,9 +782,16 @@ export default function (pi: ExtensionAPI) {
       );
       if (!start) return;
 
-      currentPhase = "clarifying";
-      activeGoalDocument = null;
-      updateState(STATE_FILE, { phase: "clarifying", activeGoalDocument: null }).catch(() => {});
+      if (topic) pi.setSessionName(makeSessionName("Clarify", topic));
+      persistWorkflowState(pi, {
+        phase: "clarifying",
+        activeGoalDocument: null,
+        lastCommand: "clarify",
+        lastTopic: topic || workflowState.lastTopic,
+        interrupted: false,
+        interruptedReason: null,
+        interruptedAt: null,
+      });
       ctx.ui.setStatus("JINHO", "Clarification in progress...");
 
       const prompt = topic
@@ -707,11 +812,18 @@ export default function (pi: ExtensionAPI) {
       );
       if (!ok) return;
 
-      currentPhase = "planning";
-      updateState(STATE_FILE, { phase: "planning" }).catch(() => {});
+      const topic = args?.trim() || "";
+      if (topic) pi.setSessionName(makeSessionName("Plan", topic));
+      persistWorkflowState(pi, {
+        phase: "planning",
+        lastCommand: "plan",
+        lastTopic: topic || workflowState.lastTopic,
+        interrupted: false,
+        interruptedReason: null,
+        interruptedAt: null,
+      });
       ctx.ui.setStatus("JINHO", "Agentic planning workflow in progress...");
 
-      const topic = args?.trim() || "";
       const prompt = topic
         ? `Create an executable implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- Each step must specify: exact file path, what changes, why.\n- Every step must be concrete — no placeholders like 'implement the service'.`
         : `Create an executable implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm scope and approach.\n- Each step must be concrete — no placeholders.\n- End with a Self-Review.`;
@@ -730,16 +842,83 @@ export default function (pi: ExtensionAPI) {
       );
       if (!confirmed) return;
 
-      currentPhase = "ultraplanning";
-      updateState(STATE_FILE, { phase: "ultraplanning" }).catch(() => {});
+      const topic = args?.trim() || "";
+      if (topic) pi.setSessionName(makeSessionName("Ultraplan", topic));
+      persistWorkflowState(pi, {
+        phase: "ultraplanning",
+        lastCommand: "ultraplan",
+        lastTopic: topic || workflowState.lastTopic,
+        interrupted: false,
+        interruptedReason: null,
+        interruptedAt: null,
+      });
       ctx.ui.setStatus("JINHO", "Agentic milestone workflow in progress...");
 
-      const topic = args?.trim() || "";
       const prompt = topic
         ? `Decompose the following task into milestones: "${topic}"\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify which parts of the codebase are affected.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize findings into a milestone DAG.`
         : `Decompose the current task into milestones.\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify the scope and affected components.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize their findings into a milestone DAG.`;
 
       pi.sendUserMessage(prompt);
+    },
+  });
+
+  pi.registerCommand("resume", {
+    description: "Browse previous sessions by workspace and resume one with OMJ workflow restoration",
+    handler: async (_args, ctx) => {
+      const sessions = await SessionManager.listAll();
+      const currentSessionPath = ctx.sessionManager.getSessionFile();
+      const resumableSessions = sessions
+        .filter((session) => session.path !== currentSessionPath)
+        .sort((a, b) => b.modified.getTime() - a.modified.getTime());
+
+      if (resumableSessions.length === 0) {
+        ctx.ui.notify("No previous sessions found.", "info");
+        return;
+      }
+
+      const grouped = new Map<string, typeof resumableSessions>();
+      for (const session of resumableSessions) {
+        const key = toWorkspaceKey(session.cwd);
+        const bucket = grouped.get(key);
+        if (bucket) bucket.push(session);
+        else grouped.set(key, [session]);
+      }
+
+      while (true) {
+        const workspaceChoices = Array.from(grouped.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([workspace, list]) => `${workspace} (${list.length})`);
+
+        const workspaceChoice = await ctx.ui.select(
+          "Choose a workspace to resume from:",
+          [...workspaceChoices, "Cancel"],
+        );
+
+        if (!workspaceChoice || workspaceChoice === "Cancel") return;
+
+        const workspace = workspaceChoice.replace(/ \(\d+\)$/, "");
+        const group = grouped.get(workspace);
+        if (!group || group.length === 0) continue;
+
+        const sessionChoices = group.map((session) => formatSessionChoice(session, currentSessionPath));
+        const sessionChoice = await ctx.ui.select(
+          `Choose a session in ${workspace}:`,
+          [...sessionChoices, "← Back"],
+        );
+
+        if (!sessionChoice || sessionChoice === "← Back") continue;
+
+        const selected = group.find(
+          (session) => formatSessionChoice(session, currentSessionPath) === sessionChoice,
+        );
+        if (!selected) continue;
+
+        const result = await ctx.switchSession(selected.path);
+        if (result.cancelled) {
+          ctx.ui.notify("Resume cancelled.", "info");
+        }
+        return;
+      }
     },
   });
 
@@ -753,7 +932,13 @@ export default function (pi: ExtensionAPI) {
       );
       if (!confirmed) return;
 
-      currentPhase = "idle";
+      persistWorkflowState(pi, {
+        phase: "idle",
+        lastCommand: null,
+        interrupted: false,
+        interruptedReason: null,
+        interruptedAt: null,
+      });
       ctx.ui.setStatus("JINHO", "Manual ask_user_question test in progress...");
 
       pi.sendUserMessage(
@@ -813,17 +998,48 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("reset-phase", {
     description: "Reset the workflow phase to idle (clears clarify/plan/ultraplan mode)",
     handler: async (_args, ctx) => {
-      currentPhase = "idle";
-      activeGoalDocument = null;
-      updateState(STATE_FILE, { phase: "idle", activeGoalDocument: null }).catch(() => {});
+      persistWorkflowState(pi, {
+        phase: "idle",
+        activeGoalDocument: null,
+        interrupted: false,
+        interruptedReason: null,
+        interruptedAt: null,
+      });
       ctx.ui.setStatus("JINHO", undefined);
       ctx.ui.notify("Workflow phase reset to idle.", "info");
     },
   });
 
+  pi.on("agent_start", async () => {
+    agentRunActive = true;
+    assistantMessageCompleted = false;
+  });
+
+  pi.on("agent_end", async (_event, _ctx) => {
+    if (agentRunActive) {
+      if (!assistantMessageCompleted && currentPhase !== "idle") {
+        persistWorkflowState(pi, {
+          interrupted: true,
+          interruptedReason: "agent_interrupted",
+          interruptedAt: new Date().toISOString(),
+        });
+      } else if (workflowState.interrupted) {
+        persistWorkflowState(pi, {
+          interrupted: false,
+          interruptedReason: null,
+          interruptedAt: null,
+        });
+      }
+    }
+
+    agentRunActive = false;
+    assistantMessageCompleted = false;
+  });
+
   pi.on("message_end", async (event, _ctx) => {
     const msg = event.message;
     if (msg.role === "assistant") {
+      assistantMessageCompleted = true;
       const usage = msg.usage;
       if (usage) {
         cacheStats.totalInput += usage.input;
@@ -840,21 +1056,43 @@ export default function (pi: ExtensionAPI) {
     activeTools.running.delete(event.toolCallId);
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    const saved = await loadState(STATE_FILE);
-    currentPhase = saved.phase;
-    activeGoalDocument = saved.activeGoalDocument;
+  pi.on("session_before_switch", async (_event, _ctx) => {
+    if (!agentRunActive || currentPhase === "idle") return;
+    persistWorkflowState(pi, {
+      interrupted: true,
+      interruptedReason: "session_switch",
+      interruptedAt: new Date().toISOString(),
+    });
+  });
+
+  pi.on("session_shutdown", async (_event, _ctx) => {
+    if (!agentRunActive || currentPhase === "idle") return;
+    persistWorkflowState(pi, {
+      interrupted: true,
+      interruptedReason: "session_shutdown",
+      interruptedAt: new Date().toISOString(),
+    });
+  });
+
+  pi.on("session_tree", async (_event, ctx) => {
+    restoreWorkflowState(ctx);
+  });
+
+  pi.on("session_start", async (event, ctx) => {
+    restoreWorkflowState(ctx);
 
     cacheStats.totalInput = 0;
     cacheStats.totalCacheRead = 0;
     activeTools.running.clear();
+    agentRunActive = false;
+    assistantMessageCompleted = false;
 
-    // Find IDS.md path (walk up from cwd) — content is re-read every turn in before_agent_start
+    // Find project context file path (walk up from cwd) — content is re-read every turn in before_agent_start
     try {
-      projectContextPath = await findIdsMd(ctx.cwd);
+      projectContextPath = await findProjectContextFile(ctx.cwd);
       if (projectContextPath) {
         projectContext = await readFile(projectContextPath, "utf-8");
-        ctx.ui.notify(`IDS.md found — context will refresh every turn (${projectContextPath})`, "info");
+        ctx.ui.notify(`${basename(projectContextPath)} found — context will refresh every turn (${projectContextPath})`, "info");
       } else {
         projectContextPath = null;
         projectContext = "";
@@ -878,7 +1116,7 @@ export default function (pi: ExtensionAPI) {
 
       const tips = [
         "Use /plan to generate a structured implementation plan after clarifying.",
-        "Use /ultraplan for complex tasks that need multi-agent review.",
+        "Use /resume to jump back into an older session.",
         "Use /reset-phase if you want to switch from one workflow to another.",
       ];
       const randomTip = tips[Math.floor(Math.random() * tips.length)];
@@ -905,9 +1143,25 @@ export default function (pi: ExtensionAPI) {
       }, cacheStats, activeTools);
     });
 
+    if (event.reason === "resume" && workflowState.interrupted) {
+      ctx.ui.notify(
+        `Resumed interrupted workflow (${describeInterruptReason(workflowState.interruptedReason)}).`,
+        "warning",
+      );
+    } else if (event.reason === "resume" && workflowState.phase !== "idle") {
+      ctx.ui.notify(`Resumed ${workflowState.phase} workflow.`, "info");
+    }
+
     ctx.ui.notify(
-      "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /reset-phase",
+      "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase",
       "info"
     );
+
+    if (event.reason === "resume") {
+      const resumePrompt = getResumePromptForState(workflowState);
+      if (resumePrompt) {
+        pi.sendUserMessage(resumePrompt);
+      }
+    }
   });
 }
