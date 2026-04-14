@@ -139,10 +139,14 @@ summary { cursor: pointer; font-weight: 800; }
   word-break: keep-all;
 }
 
+.skill-subtitle {
+  margin-bottom: 12px;
+}
+
 .skill-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
   margin-top: 12px;
 }
 
@@ -153,17 +157,58 @@ summary { cursor: pointer; font-weight: 800; }
   box-shadow: var(--shadow);
 }
 
+.skill-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .skill-card h3 {
-  margin-top: 0;
-  margin-bottom: 8px;
+  margin: 0;
   font-size: 1.02rem;
 }
 
+.skill-badge {
+  border: 2px solid #000;
+  background: #f1f7ff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.skill-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.skill-points li {
+  border-left: 3px solid #000;
+  padding-left: 8px;
+}
+
 .skill-flow {
-  margin-top: 16px;
+  margin-top: 18px;
   border: 3px solid #000;
   background: #f5f9ff;
   padding: 12px;
+}
+
+.skill-flow h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.skill-flow-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
 }
 
 .skill-tip {
@@ -172,4 +217,12 @@ summary { cursor: pointer; font-weight: 800; }
 
 .skill-detail {
   margin-top: 10px;
+}
+
+.skill-detail summary {
+  font-size: 0.95rem;
+}
+
+.skill-detail-body {
+  margin-top: 8px;
 }
