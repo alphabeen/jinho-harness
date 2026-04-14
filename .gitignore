@@ -3,3 +3,6 @@ package-lock.json
 *.js
 *.d.ts
 dist/
+
+# Internal planning docs (do not publish to GH Pages)
+docs/engineering-discipline/plans/
