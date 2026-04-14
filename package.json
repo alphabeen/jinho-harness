@@ -15,7 +15,7 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/turndown": "^5.0.5",
     "typescript": "^5.9.3",
     "vitest": "^1.0.0"
