@@ -12,6 +12,7 @@ describe("Korean landing page", () => {
       'lang="ko"',
       'id="install"',
       'id="quickstart"',
+      'id="skills"',
       'id="commands"',
       'id="faq"',
       'pi install git:alphabeen/oh-my-jinho',
@@ -19,6 +20,9 @@ describe("Korean landing page", () => {
       '/plan [주제]',
       '설치',
       '빠른 시작',
+      '실무형 스킬 안내 (Option 3)',
+      '추천 사용 순서',
+      '실패 방지 팁',
       '핵심 커맨드',
     ];
 
