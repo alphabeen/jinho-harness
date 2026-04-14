@@ -8,6 +8,15 @@
 
 ---
 
+## 웹사이트
+
+설치/빠른 시작 중심 페이지:
+
+- GitHub Pages: `https://alphabeen.github.io/oh-my-jinho/`
+- 로컬 미리보기: `docs/index.html` 직접 열기
+
+---
+
 ## 설치
 
 ```bash
@@ -30,6 +39,7 @@ pi install git:alphabeen/oh-my-jinho#v1.0.0
 | `/clarify [주제]` | 요청 명확화 — 질문을 하나씩 던지며 Context Brief 작성 |
 | `/plan [주제]` | 실행 가능한 구현 계획 생성 (플레이스홀더 없음) |
 | `/ultraplan [주제]` | 복잡한 작업을 마일스톤 DAG로 분해 (5개 reviewer 병렬 실행) |
+| `/resume` | workspace별 이전 세션 목록을 보고 선택한 세션으로 진입한 뒤 작업 흐름을 이어감 |
 | `/reset-phase` | 워크플로우를 idle로 초기화 |
 
 ---
@@ -64,7 +74,7 @@ pi install git:alphabeen/oh-my-jinho#v1.0.0
 
 ---
 
-## 스킬 (13개)
+## 스킬 (12개)
 
 `agentic-clarification`, `agentic-plan-crafting`, `agentic-milestone-planning`, `agentic-run-plan`, `agentic-review-work`, `agentic-long-run`, `agentic-brainstorming`, `agentic-clean-ai-slop`, `agentic-karpathy`, `agentic-simplify`, `agentic-rob-pike`, `agentic-systematic-debugging`
 

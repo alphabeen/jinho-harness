@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>oh-my-jinho | Quick Start</title>
+    <meta
+      name="description"
+      content="Install and start using the oh-my-jinho extension in minutes. Clarify, plan, and execute with structured agentic workflows."
+    />
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container nav">
+        <a class="brand" href="#home">oh-my-jinho</a>
+        <nav>
+          <a href="#install">Install</a>
+          <a href="#quickstart">Quick Start</a>
+          <a href="#commands">Commands</a>
+          <a href="#faq">FAQ</a>
+          <a href="https://github.com/alphabeen/oh-my-jinho" target="_blank" rel="noreferrer">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="home">
+      <section class="hero container">
+        <p class="eyebrow">Agentic Coding Harness for pi</p>
+        <h1>Install, clarify, plan, and execute in a disciplined workflow.</h1>
+        <p class="subtitle">
+          oh-my-jinho adds practical command workflows to pi so teams can turn vague requests into executable plans.
+        </p>
+        <div class="hero-actions">
+          <a class="btn primary" href="#install">Get Started</a>
+          <a class="btn" href="https://github.com/alphabeen/oh-my-jinho" target="_blank" rel="noreferrer">View Repository</a>
+        </div>
+      </section>
+
+      <section id="install" class="section container">
+        <h2>1) Install</h2>
+        <p>Install directly from GitHub:</p>
+        <pre><code>pi install git:alphabeen/oh-my-jinho</code></pre>
+        <p>Optional pinned version:</p>
+        <pre><code>pi install git:alphabeen/oh-my-jinho#v1.0.0</code></pre>
+      </section>
+
+      <section id="quickstart" class="section container">
+        <h2>2) Quick Start (3 steps)</h2>
+        <ol class="steps">
+          <li>Run <code>/setup</code> once after install (quiet startup setting).</li>
+          <li>Start with <code>/clarify [topic]</code> to build a Context Brief.</li>
+          <li>Move to <code>/plan [topic]</code> for an executable implementation plan.</li>
+        </ol>
+        <div class="callout">
+          <strong>Tip:</strong> Use <code>/resume</code> to return to previous sessions by workspace.
+        </div>
+      </section>
+
+      <section id="commands" class="section container">
+        <h2>Core Commands</h2>
+        <table>
+          <thead>
+            <tr><th>Command</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/clarify [topic]</code></td><td>Clarify scope with one-question-at-a-time flow.</td></tr>
+            <tr><td><code>/plan [topic]</code></td><td>Generate executable implementation plan tasks.</td></tr>
+            <tr><td><code>/ultraplan [topic]</code></td><td>Decompose complex work into milestone DAG with reviewers.</td></tr>
+            <tr><td><code>/resume</code></td><td>Select and jump back to a prior session workflow.</td></tr>
+            <tr><td><code>/reset-phase</code></td><td>Reset workflow phase back to idle.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section container">
+        <h2>How context injection works</h2>
+        <p>
+          If your project has an <code>IDS.md</code> file in the working directory or parent directories,
+          the harness discovers and re-reads it every turn.
+        </p>
+      </section>
+
+      <section id="faq" class="section container">
+        <h2>FAQ</h2>
+        <details>
+          <summary>Do I need to run with --extension path manually?</summary>
+          <p>No. After <code>pi install</code>, pi manages extension installation paths.</p>
+        </details>
+        <details>
+          <summary>Does this change my source code automatically?</summary>
+          <p>Only when tasks/tools explicitly write files. Clarification and planning phases are read-focused first.</p>
+        </details>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p>MIT License · Built for pi workflows · <a href="https://github.com/alphabeen/oh-my-jinho" target="_blank" rel="noreferrer">GitHub</a></p>
+      </div>
+    </footer>
+  </body>
+</html>
