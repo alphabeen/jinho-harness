@@ -138,3 +138,38 @@ summary { cursor: pointer; font-weight: 800; }
 .section summary {
   word-break: keep-all;
 }
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.skill-card {
+  border: 3px solid #000;
+  background: #fff;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+
+.skill-card h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 1.02rem;
+}
+
+.skill-flow {
+  margin-top: 16px;
+  border: 3px solid #000;
+  background: #f5f9ff;
+  padding: 12px;
+}
+
+.skill-tip {
+  margin-top: 16px;
+}
+
+.skill-detail {
+  margin-top: 10px;
+}
