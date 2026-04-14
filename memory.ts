@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import Database from "better-sqlite3";
 import { homedir } from "os";
 import { join } from "path";
 import { mkdirSync } from "fs";
@@ -74,10 +74,10 @@ CREATE INDEX IF NOT EXISTS idx_events_workspace ON events(workspace, created_at 
 `;
 
 export class MemoryDb {
-  private db: DatabaseSync;
+  private db: Database.Database;
 
   constructor(dbPath: string) {
-    this.db = new DatabaseSync(dbPath);
+    this.db = new Database(dbPath);
     this.db.exec(SCHEMA);
   }
 

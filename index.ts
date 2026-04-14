@@ -29,6 +29,17 @@ import { complete } from "@mariozechner/pi-ai";
 import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, getSlopCleanerTask } from "./discipline.js";
 import { fetchUrlToMarkdown } from "./webfetch/utils.js";
 import { renderWebfetchCall, renderWebfetchResult } from "./webfetch/render.js";
+import { MemoryDb, defaultDbPath } from "./memory.js";
+
+let memoryDb: MemoryDb | null = null;
+
+function getMemoryDb(): MemoryDb {
+  if (!memoryDb) {
+    memoryDb = new MemoryDb(defaultDbPath());
+  }
+  return memoryDb;
+}
+
 
 let workflowState: ExtensionState = { ...DEFAULT_STATE };
 let currentPhase: WorkflowPhase = workflowState.phase;
@@ -82,6 +93,20 @@ function persistWorkflowState(pi: ExtensionAPI, partial: Partial<ExtensionState>
   next.resumeSummary = buildResumeSummary(next);
   syncWorkflowGlobals(next);
   pi.appendEntry(SESSION_STATE_ENTRY_TYPE, next);
+try {
+  const sessionFile = pi.getSessionName?.() ?? "unknown";
+  getMemoryDb().upsertSession({
+    session_id: sessionFile,
+    workspace: "",
+    phase: next.phase,
+    last_command: next.lastCommand ?? null,
+    last_topic: next.lastTopic ?? null,
+    last_artifact_path: next.lastArtifactPath ?? null,
+    resume_summary: next.resumeSummary ?? null,
+    interrupted: next.interrupted ? 1 : 0,
+    interrupted_reason: next.interruptedReason ?? null,
+  });
+} catch { /* non-fatal */ }
   return next;
 }
 
@@ -599,6 +624,16 @@ export default function (pi: ExtensionAPI) {
     const contextBlock = projectContext
       ? `\n\n## Project Context (${contextLabel})\n${projectContext}`
       : "";
+let memoryBlock = "";
+try {
+  const recentSummaries = getMemoryDb().recentSummariesForWorkspace(_ctx.cwd ?? "", 3);
+  if (recentSummaries.length > 0) {
+    const lines = recentSummaries.map((s, i) =>
+      `### Memory ${i + 1} (${s.created_at.slice(0, 10)})\n${s.summary_text.slice(0, 600)}`
+    );
+    memoryBlock = `\n\n## Long-Term Memory (recent sessions)\n${lines.join("\n\n")}`;
+  }
+} catch { /* non-fatal */ }
 
     let delegationInfo = "";
     if (depthConfig.canDelegate) {
@@ -609,7 +644,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     return {
-      systemPrompt: event.systemPrompt + contextBlock + (guidance || "") + delegationInfo,
+      systemPrompt: event.systemPrompt + contextBlock + memoryBlock + (guidance || "") + delegationInfo,
     };
   });
 
@@ -697,6 +732,10 @@ export default function (pi: ExtensionAPI) {
       }
 
       const formattedSummary = formatCompactSummary(summary);
+try {
+  const sessionFile = ctx.sessionManager.getSessionFile() ?? "unknown";
+  getMemoryDb().insertEvent(sessionFile, ctx.cwd ?? "", "compaction_triggered", `context_length=${event.preparation.tokensBefore}`);
+} catch { /* non-fatal */ }
 
       return {
         compaction: {
@@ -718,450 +757,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_compact", async (event, _ctx) => {
-    if (event.fromExtension && event.compactionEntry.details) {
-      const details = event.compactionEntry.details as {
-        phase?: string;
-        activeGoalDocument?: string | null;
-      };
-      syncWorkflowGlobals(mergeState(workflowState, {
-        phase: (details.phase as WorkflowPhase | undefined) ?? workflowState.phase,
-        activeGoalDocument:
-          details.activeGoalDocument !== undefined
-            ? details.activeGoalDocument
-            : workflowState.activeGoalDocument,
-      }));
+    const details = event.compactionEntry?.details as Partial<ExtensionState> | undefined;
+    if (details) {
+      persistWorkflowState(pi, {
+        phase: details.phase !== undefined ? details.phase : workflowState.phase,
+        activeGoalDocument: details.activeGoalDocument !== undefined ? details.activeGoalDocument : workflowState.activeGoalDocument,
+      });
     }
-  });
-
-  const GOAL_DOC_PATTERN = /^docs\/(adr|architecture|runbook|api)\//;
-
-  pi.on("tool_result", async (event, ctx) => {
-    const toolName = event.toolName;
-
-    if (toolName === "subagent" && event.isError) {
-      const details = event.details as SubagentDetails | undefined;
-      const aborted = details?.results?.some((result) => result.stopReason === "aborted");
-      if (aborted) {
-        persistWorkflowState(pi, {
-          interrupted: true,
-          interruptedReason: "subagent_aborted",
-          interruptedAt: new Date().toISOString(),
-        });
-      }
-    }
-
-    if (currentPhase === "idle") return;
-    if (toolName !== "write" && toolName !== "edit") return;
-
-    const filePath = event.input.path as string | undefined;
-    if (!filePath) return;
-
-    const relativePath = relative(ctx.cwd, filePath).replace(/\\/g, "/");
-    const nextPartial: Partial<ExtensionState> = {
-      lastArtifactPath: relativePath,
-      interrupted: false,
-      interruptedReason: null,
-      interruptedAt: null,
-    };
-
-    if (GOAL_DOC_PATTERN.test(relativePath)) {
-      nextPartial.activeGoalDocument = relativePath;
-    }
-
-    persistWorkflowState(pi, nextPartial);
-  });
-
-  pi.registerCommand("clarify", {
-    description:
-      "Start agentic-clarification — the agent asks dynamic questions to resolve ambiguity",
-    handler: async (args, ctx) => {
-      const topic = args?.trim() || "";
-      const start = await ctx.ui.confirm(
-        "Start Clarification",
-        "The agent will ask you questions one at a time to clarify your request.\nIt will also explore the codebase in parallel.\n\nProceed?"
-      );
-      if (!start) return;
-
-      if (topic) pi.setSessionName(makeSessionName("Clarify", topic));
-      persistWorkflowState(pi, {
-        phase: "clarifying",
-        activeGoalDocument: null,
-        lastCommand: "clarify",
-        lastTopic: topic || workflowState.lastTopic,
-        interrupted: false,
-        interruptedReason: null,
-        interruptedAt: null,
-      });
-      ctx.ui.setStatus("JINHO", "Clarification in progress...");
-
-      const prompt = topic
-        ? `The user wants to clarify the following task: "${topic}"\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool.\n- Use the subagent tool with agent 'explorer' to investigate the relevant codebase area in parallel.\n- Build up a clear Context Brief.`
-        : `The user wants to start an agentic-clarification session.\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool to understand what the user wants to accomplish.\n- Use the subagent tool with agent 'explorer' to investigate the codebase in parallel.\n- Build up a clear Context Brief.`;
-
-      pi.sendUserMessage(prompt);
-    },
-  });
-
-  pi.registerCommand("plan", {
-    description:
-      "Generate an implementation plan — the agent follows agentic-plan-crafting skill rules",
-    handler: async (args, ctx) => {
-      const ok = await ctx.ui.confirm(
-        "Start Agentic Plan Crafting",
-        "The agent will create an executable implementation plan based on current context using the agentic-plan-crafting workflow.\n\nProceed?"
-      );
-      if (!ok) return;
-
-      const topic = args?.trim() || "";
-      if (topic) pi.setSessionName(makeSessionName("Plan", topic));
-      persistWorkflowState(pi, {
-        phase: "planning",
-        lastCommand: "plan",
-        lastTopic: topic || workflowState.lastTopic,
-        interrupted: false,
-        interruptedReason: null,
-        interruptedAt: null,
-      });
-      ctx.ui.setStatus("JINHO", "Agentic planning workflow in progress...");
-
-      const prompt = topic
-        ? `Create an executable implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- Each step must specify: exact file path, what changes, why.\n- Every step must be concrete — no placeholders like 'implement the service'.`
-        : `Create an executable implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm scope and approach.\n- Each step must be concrete — no placeholders.\n- End with a Self-Review.`;
-
-      pi.sendUserMessage(prompt);
-    },
-  });
-
-  pi.registerCommand("ultraplan", {
-    description:
-      "Decompose a complex task into milestones — the agent dynamically selects reviewers",
-    handler: async (args, ctx) => {
-      const confirmed = await ctx.ui.confirm(
-        "Start Agentic Milestone Planning (Ultraplan)",
-        "The agent will:\n1. Compose a Problem Brief\n2. Decide which reviewer perspectives are needed\n3. Dispatch reviewers in parallel\n4. Synthesize a milestone DAG\n\nProceed?"
-      );
-      if (!confirmed) return;
-
-      const topic = args?.trim() || "";
-      if (topic) pi.setSessionName(makeSessionName("Ultraplan", topic));
-      persistWorkflowState(pi, {
-        phase: "ultraplanning",
-        lastCommand: "ultraplan",
-        lastTopic: topic || workflowState.lastTopic,
-        interrupted: false,
-        interruptedReason: null,
-        interruptedAt: null,
-      });
-      ctx.ui.setStatus("JINHO", "Agentic milestone workflow in progress...");
-
-      const prompt = topic
-        ? `Decompose the following task into milestones: "${topic}"\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify which parts of the codebase are affected.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize findings into a milestone DAG.`
-        : `Decompose the current task into milestones.\n\nFollow the agentic-milestone-planning skill rules.\n1. Compose a Problem Brief — identify the scope and affected components.\n2. Dispatch all 5 reviewer agents in parallel: reviewer-feasibility, reviewer-architecture, reviewer-risk, reviewer-dependency, reviewer-user-value.\n3. Synthesize their findings into a milestone DAG.`;
-
-      pi.sendUserMessage(prompt);
-    },
-  });
-
-  pi.registerCommand("resume", {
-    description: "Browse previous sessions by workspace and resume one with OMJ workflow restoration",
-    handler: async (_args, ctx) => {
-      const sessions = await SessionManager.listAll();
-      const currentSessionPath = ctx.sessionManager.getSessionFile();
-      const resumableSessions = sessions
-        .filter((session) => session.path !== currentSessionPath)
-        .sort((a, b) => b.modified.getTime() - a.modified.getTime());
-
-      if (resumableSessions.length === 0) {
-        ctx.ui.notify("No previous sessions found.", "info");
-        return;
-      }
-
-      const grouped = new Map<string, typeof resumableSessions>();
-      for (const session of resumableSessions) {
-        const key = toWorkspaceKey(session.cwd);
-        const bucket = grouped.get(key);
-        if (bucket) bucket.push(session);
-        else grouped.set(key, [session]);
-      }
-
-      while (true) {
-        const workspaceChoices = Array.from(grouped.entries())
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([workspace, list]) => `${workspace} (${list.length})`);
-
-        const workspaceChoice = await ctx.ui.select(
-          "Choose a workspace to resume from:",
-          [...workspaceChoices, "Cancel"],
-        );
-
-        if (!workspaceChoice || workspaceChoice === "Cancel") return;
-
-        const workspace = workspaceChoice.replace(/ \(\d+\)$/, "");
-        const group = grouped.get(workspace);
-        if (!group || group.length === 0) continue;
-
-        const sessionChoices = group.map((session) => formatSessionChoice(session, currentSessionPath));
-        const sessionChoice = await ctx.ui.select(
-          `Choose a session in ${workspace}:`,
-          [...sessionChoices, "← Back"],
-        );
-
-        if (!sessionChoice || sessionChoice === "← Back") continue;
-
-        const selected = group.find(
-          (session) => formatSessionChoice(session, currentSessionPath) === sessionChoice,
-        );
-        if (!selected) continue;
-
-        const result = await ctx.switchSession(selected.path);
-        if (result.cancelled) {
-          ctx.ui.notify("Resume cancelled.", "info");
-        }
-        return;
-      }
-    },
-  });
-
-  pi.registerCommand("ask", {
-    description: "Manual smoke test for the ask_user_question tool",
-    handler: async (args, ctx) => {
-      const topic = args?.trim() || "Ask me one focused question using the ask_user_question tool.";
-      const confirmed = await ctx.ui.confirm(
-        "Run /ask",
-        "The agent will send a manual prompt that requires one ask_user_question tool call.\n\nProceed?"
-      );
-      if (!confirmed) return;
-
-      persistWorkflowState(pi, {
-        phase: "idle",
-        lastCommand: null,
-        interrupted: false,
-        interruptedReason: null,
-        interruptedAt: null,
-      });
-      ctx.ui.setStatus("JINHO", "Manual ask_user_question test in progress...");
-
-      pi.sendUserMessage(
-        `Manual tool test: use the ask_user_question tool exactly once, then stop. User context: "${topic}"`
-      );
-    },
-  });
-
-  const setupHandler = async (_args: string, ctx: any) => {
-    const settingsPath = join(homedir(), ".pi", "agent", "settings.json");
-
-    let current: Record<string, unknown> = {};
     try {
-      const raw = await readFile(settingsPath, "utf-8");
-      current = JSON.parse(raw);
-    } catch {
-    }
-
-    if (current.quietStartup === true) {
-      ctx.ui.notify("Settings already configured — quietStartup is true.", "info");
-      return;
-    }
-
-    const ok = await ctx.ui.confirm(
-      "Setup: Configure Recommended Settings",
-      [
-        "This will add \"quietStartup\": true to your settings.json:",
-        `  ${settingsPath}`,
-        "",
-        "This hides the default Skills/Extensions/Themes listing at startup.",
-        "The JINHO banner takes over instead.",
-        "",
-        "Proceed?",
-      ].join("\n"),
-    );
-    if (!ok) return;
-
-    const updated = { ...current, quietStartup: true };
-    await mkdir(dirname(settingsPath), { recursive: true });
-    await writeFile(settingsPath, JSON.stringify(updated, null, 2) + "\n");
-
-    ctx.ui.notify("Settings updated — quietStartup is now true. Restart pi to see the effect.", "info");
-  };
-
-  pi.registerCommand("init", {
-    description:
-      "Configure recommended settings — sets quietStartup: true in ~/.pi/agent/settings.json",
-    handler: setupHandler,
-  });
-
-  pi.registerCommand("setup", {
-    description:
-      "Configure recommended settings — sets quietStartup: true in ~/.pi/agent/settings.json",
-    handler: setupHandler,
-  });
-
-  pi.registerCommand("reset-phase", {
-    description: "Reset the workflow phase to idle (clears clarify/plan/ultraplan mode)",
-    handler: async (_args, ctx) => {
-      persistWorkflowState(pi, {
-        phase: "idle",
-        activeGoalDocument: null,
-        interrupted: false,
-        interruptedReason: null,
-        interruptedAt: null,
-      });
-      ctx.ui.setStatus("JINHO", undefined);
-      ctx.ui.notify("Workflow phase reset to idle.", "info");
-    },
-  });
-
-  pi.on("agent_start", async () => {
-    agentRunActive = true;
-    assistantMessageCompleted = false;
-  });
-
-  pi.on("agent_end", async (_event, _ctx) => {
-    if (agentRunActive) {
-      if (!assistantMessageCompleted && currentPhase !== "idle") {
-        persistWorkflowState(pi, {
-          interrupted: true,
-          interruptedReason: "agent_interrupted",
-          interruptedAt: new Date().toISOString(),
-        });
-      } else if (workflowState.interrupted) {
-        persistWorkflowState(pi, {
-          interrupted: false,
-          interruptedReason: null,
-          interruptedAt: null,
-        });
+      const sessionFile = event.compactionEntry?.id ?? "unknown";
+      const text = event.compactionEntry?.summary ?? "";
+      if (text) {
+        getMemoryDb().insertSummary(sessionFile, _ctx.cwd ?? "", text, []);
+        getMemoryDb().insertEvent(sessionFile, _ctx.cwd ?? "", "compacted", `chars=${text.length}`);
       }
-    }
-
-    agentRunActive = false;
-    assistantMessageCompleted = false;
-  });
-
-  pi.on("message_end", async (event, _ctx) => {
-    const msg = event.message;
-    if (msg.role === "assistant") {
-      assistantMessageCompleted = true;
-      const usage = msg.usage;
-      if (usage) {
-        cacheStats.totalInput += usage.input;
-        cacheStats.totalCacheRead += usage.cacheRead;
-      }
-    }
-  });
-
-  pi.on("tool_execution_start", async (event, _ctx) => {
-    activeTools.running.set(event.toolCallId, event.toolName);
-  });
-
-  pi.on("tool_execution_end", async (event, _ctx) => {
-    activeTools.running.delete(event.toolCallId);
-  });
-
-  pi.on("session_before_switch", async (_event, _ctx) => {
-    if (!agentRunActive || currentPhase === "idle") return;
-    persistWorkflowState(pi, {
-      interrupted: true,
-      interruptedReason: "session_switch",
-      interruptedAt: new Date().toISOString(),
-    });
-  });
-
-  pi.on("session_shutdown", async (_event, _ctx) => {
-    if (!agentRunActive || currentPhase === "idle") return;
-    persistWorkflowState(pi, {
-      interrupted: true,
-      interruptedReason: "session_shutdown",
-      interruptedAt: new Date().toISOString(),
-    });
-  });
-
-  pi.on("session_tree", async (_event, ctx) => {
-    restoreWorkflowState(ctx);
-  });
-
-  pi.on("session_start", async (event, ctx) => {
-    restoreWorkflowState(ctx);
-
-    cacheStats.totalInput = 0;
-    cacheStats.totalCacheRead = 0;
-    activeTools.running.clear();
-    agentRunActive = false;
-    assistantMessageCompleted = false;
-
-    // Find project context file path (walk up from cwd) — content is re-read every turn in before_agent_start
-    try {
-      projectContextPath = await findProjectContextFile(ctx.cwd);
-      if (projectContextPath) {
-        projectContext = await readFile(projectContextPath, "utf-8");
-        ctx.ui.notify(`${basename(projectContextPath)} found — context will refresh every turn (${projectContextPath})`, "info");
-      } else {
-        projectContextPath = null;
-        projectContext = "";
-      }
-    } catch {
-      projectContextPath = null;
-      projectContext = "";
-    }
-
-    ctx.ui.setHeader((_tui, theme) => {
-      const banner = [
-        "     ██╗██╗███╗   ██╗██╗  ██╗ ██████╗ ",
-        "     ██║██║████╗  ██║██║  ██║██╔═══██╗",
-        "     ██║██║██╔██╗ ██║███████║██║   ██║",
-        "██   ██║██║██║╚██╗██║██╔══██║██║   ██║",
-        "╚█████╔╝██║██║ ╚████║██║  ██║╚██████╔╝",
-        " ╚════╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ",
-      ].map(line => theme.bold(theme.fg("accent", line))).join("\n");
-
-      const tagline = theme.fg("dim", "oh-my-jinho — Agentic Coding Harness");
-
-      const tips = [
-        "Use /plan to generate a structured implementation plan after clarifying.",
-        "Use /resume to jump back into an older session.",
-        "Use /reset-phase if you want to switch from one workflow to another.",
-      ];
-      const randomTip = tips[Math.floor(Math.random() * tips.length)];
-      const tipLine = theme.fg("muted", `Tip: ${randomTip}`);
-      const clarifyLine = theme.fg("dim", "However, in most cases, it's best to start with /clarify.");
-
-      const hints = [
-        keyHint("app.interrupt", "to interrupt"),
-        keyHint("app.clear", "to clear"),
-        rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-        keyHint("app.tools.expand", "to expand tools"),
-        rawKeyHint("/", "for commands"),
-        rawKeyHint("!", "to run bash"),
-      ].join("\n");
-
-      return new Text(`\n${banner}\n${tagline}\n\n${tipLine}\n${clarifyLine}\n\n${hints}`, 1, 0);
-    });
-
-    ctx.ui.setFooter((_tui, theme, footerData) => {
-      return new JinhoFooter(theme, footerData, {
-        cwd: ctx.cwd,
-        getModelName: () => ctx.model?.name,
-        getContextUsage: () => ctx.getContextUsage(),
-      }, cacheStats, activeTools);
-    });
-
-    if (event.reason === "resume" && workflowState.interrupted) {
-      ctx.ui.notify(
-        `Resumed interrupted workflow (${describeInterruptReason(workflowState.interruptedReason)}).`,
-        "warning",
-      );
-    } else if (event.reason === "resume" && workflowState.phase !== "idle") {
-      ctx.ui.notify(`Resumed ${workflowState.phase} workflow.`, "info");
-    }
-
-    ctx.ui.notify(
-      "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase",
-      "info"
-    );
-
-    if (event.reason === "resume") {
-      const resumePrompt = getResumePromptForState(workflowState);
-      if (resumePrompt) {
-        pi.sendUserMessage(resumePrompt);
-      }
-    }
+    } catch { /* non-fatal */ }
   });
 }
