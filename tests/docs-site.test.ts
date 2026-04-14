@@ -12,6 +12,7 @@ describe("Korean landing page", () => {
       'lang="ko"',
       'id="install"',
       'id="quickstart"',
+      'id="highlights"',
       'id="skills"',
       'id="commands"',
       'id="faq"',
@@ -23,6 +24,7 @@ describe("Korean landing page", () => {
       '실무형 스킬 안내 (Option 3)',
       '추천 사용 순서',
       '실패 방지 팁',
+      'subagent는 별도 pi 프로세스로 실행됩니다',
       '핵심 커맨드',
     ];
 
