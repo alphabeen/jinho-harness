@@ -6,8 +6,8 @@
 
 프로젝트별 컨텍스트는 아래 우선순위로 자동 탐색합니다(상위 디렉토리까지 탐색).
 
-1. `OMJ.md`
-2. `IDS.md` (하위 호환)
+1. `IDS.md` (기본 우선)
+2. `OMJ.md` (하위 호환)
 3. `PROJECT_CONTEXT.md`
 4. `AGENT_CONTEXT.md`
 
@@ -39,6 +39,14 @@ pi install git:alphabeen/oh-my-jinho
 pi install git:alphabeen/oh-my-jinho#v1.0.0
 ```
 
+## IDS 전용 운용 (Soft Mode)
+
+기본 동작은 IDS 중심으로 맞춰져 있습니다.
+
+- `IDS.md`가 있으면 **IDS mode active**로 시작하며, IDS 규칙(DDD 레이어/Phase 안전 규칙)을 우선 적용합니다.
+- `IDS.md`가 없어도 하네스는 동작하지만, 시작 시 경고가 표시되고 일반 모드로 실행됩니다.
+- 하드 차단(비-IDS 작업 거부)은 이번 범위에 포함되지 않습니다.
+
 ---
 
 ## 커맨드
@@ -57,8 +65,8 @@ pi install git:alphabeen/oh-my-jinho#v1.0.0
 
 프로젝트 루트(혹은 상위 디렉토리)에서 아래 순서로 컨텍스트 파일을 찾습니다.
 
-1. `OMJ.md`
-2. `IDS.md` (하위 호환)
+1. `IDS.md` (기본 우선)
+2. `OMJ.md` (하위 호환)
 3. `PROJECT_CONTEXT.md`
 4. `AGENT_CONTEXT.md`
 
