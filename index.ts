@@ -30,6 +30,11 @@ import { isDisciplineAgent, augmentAgentWithBoth, augmentAgentWithContext, getSl
 import { fetchUrlToMarkdown } from "./webfetch/utils.js";
 import { renderWebfetchCall, renderWebfetchResult } from "./webfetch/render.js";
 import { MemoryDb, defaultDbPath } from "./memory.js";
+import {
+  PROJECT_CONTEXT_CANDIDATES,
+  buildIdsModeNotice,
+  isIdsMode,
+} from "./ids-profile.js";
 
 let workflowState: ExtensionState = { ...DEFAULT_STATE };
 let currentPhase: WorkflowPhase = workflowState.phase;
@@ -39,6 +44,7 @@ let projectContextPath: string | null = null;
 let currentWorkspace = "";
 let agentRunActive = false;
 let assistantMessageCompleted = false;
+let idsModeActive = false;
 
 let memoryDb: MemoryDb | null = null;
 
@@ -52,13 +58,6 @@ function getMemoryDb(): MemoryDb {
 const cacheStats: CacheStats = { totalInput: 0, totalCacheRead: 0 };
 
 const activeTools: ActiveTools = { running: new Map() };
-
-const PROJECT_CONTEXT_CANDIDATES = [
-  "OMJ.md",
-  "IDS.md",
-  "PROJECT_CONTEXT.md",
-  "AGENT_CONTEXT.md",
-];
 
 async function findProjectContextFile(startDir: string): Promise<string | null> {
   let dir = startDir;
@@ -721,8 +720,12 @@ export default function (pi: ExtensionAPI) {
       delegationInfo = `\n\n## Delegation Guards\n- Current depth: ${depthConfig.currentDepth}, max: ${depthConfig.maxDepth}\n- Cycle prevention: ${depthConfig.preventCycles ? "enabled" : "disabled"}\n- Ancestor stack: ${depthConfig.ancestorStack.length > 0 ? depthConfig.ancestorStack.join(" -> ") : "(root)"}\n\n## Available Subagents\n${agentList}`;
     }
 
+    const idsGuidance = idsModeActive
+      ? "\n\n## IDS Focus Mode\n- Prioritize IDS.md constraints over generic defaults.\n- Follow clarify -> plan -> execute sequence.\n- Respect DDD layer boundaries and Phase 0 safety rules."
+      : "";
+
     return {
-      systemPrompt: event.systemPrompt + contextBlock + memoryBlock + (guidance || "") + delegationInfo,
+      systemPrompt: event.systemPrompt + contextBlock + memoryBlock + idsGuidance + (guidance || "") + delegationInfo,
     };
   });
 
@@ -1256,6 +1259,9 @@ export default function (pi: ExtensionAPI) {
       projectContext = "";
     }
 
+    idsModeActive = isIdsMode(projectContextPath, ctx.cwd);
+    ctx.ui.notify(buildIdsModeNotice(idsModeActive), idsModeActive ? "info" : "warning");
+
     ctx.ui.setHeader((_tui, theme) => {
       const banner = [
         "     ██╗██╗███╗   ██╗██╗  ██╗ ██████╗ ",
@@ -1266,12 +1272,17 @@ export default function (pi: ExtensionAPI) {
         " ╚════╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ",
       ].map(line => theme.bold(theme.fg("accent", line))).join("\n");
 
-      const tagline = theme.fg("dim", "oh-my-jinho — Agentic Coding Harness");
+      const tagline = theme.fg(
+        "dim",
+        idsModeActive
+          ? "oh-my-jinho — IDS-focused Agentic Harness"
+          : "oh-my-jinho — Agentic Harness (add IDS.md for IDS mode)",
+      );
 
       const tips = [
-        "Use /plan to generate a structured implementation plan after clarifying.",
-        "Use /resume to jump back into an older session.",
-        "Use /reset-phase if you want to switch from one workflow to another.",
+        "Use /clarify first, then /plan for IDS-safe implementation sequencing.",
+        "Keep IDS.md current to enforce DDD layer rules and phase constraints.",
+        "Use /resume to continue interrupted IDS workflows.",
       ];
       const randomTip = tips[Math.floor(Math.random() * tips.length)];
       const tipLine = theme.fg("muted", `Tip: ${randomTip}`);
@@ -1307,7 +1318,9 @@ export default function (pi: ExtensionAPI) {
     }
 
     ctx.ui.notify(
-      "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase",
+      idsModeActive
+        ? "oh-my-jinho (IDS mode) loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase"
+        : "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase",
       "info"
     );
 
