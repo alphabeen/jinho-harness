@@ -206,6 +206,7 @@
             <tr><td><code>/plan [주제]</code></td><td>실행 가능한 구현 계획을 만듭니다.</td></tr>
             <tr><td><code>/ultraplan [주제]</code></td><td>복잡한 작업을 마일스톤 DAG로 분해합니다.</td></tr>
             <tr><td><code>/resume</code></td><td>이전 세션으로 돌아가 작업 흐름을 이어갑니다.</td></tr>
+            <tr><td><code>/mode</code></td><td>현재 IDS 모드 상태와 컨텍스트 파일/워크플로우 스냅샷을 확인합니다.</td></tr>
             <tr><td><code>/reset-phase</code></td><td>워크플로우 상태를 idle로 초기화합니다.</td></tr>
           </tbody>
         </table>
@@ -254,6 +255,10 @@
         <details>
           <summary>내장 스킬은 무엇을 도와주나요?</summary>
           <p>현재 내장 스킬은 12개이며, 요구사항 명확화부터 계획 수립, 실행, 디버깅, 리뷰/정리까지 실무 흐름을 단계별로 지원합니다.</p>
+        </details>
+        <details>
+          <summary>재시작했는데 원점으로 돌아간 것 같아요. 무엇을 확인하나요?</summary>
+          <p>먼저 <code>/mode</code>를 실행해 IDS 모드 상태와 <code>Context file</code> 경로를 확인하세요. 그다음 현재 실행 위치(cwd)가 프로젝트 루트인지 점검하세요.</p>
         </details>
         <details>
           <summary>다른 확장/동일 스킬 이름과 충돌할 수 있나요?</summary>

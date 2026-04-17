@@ -47,6 +47,16 @@ pi install git:alphabeen/oh-my-jinho#v1.0.0
 - `IDS.md`가 없어도 하네스는 동작하지만, 시작 시 경고가 표시되고 일반 모드로 실행됩니다.
 - 하드 차단(비-IDS 작업 거부)은 이번 범위에 포함되지 않습니다.
 
+### 시작 직후 확인 방법
+
+pi 재시작 후 아래 순서로 확인하세요.
+
+1. 시작 알림에 `IDS mode active` 또는 `IDS mode inactive`가 표시되는지 확인
+2. `/mode` 실행
+3. `Context file`이 기대값(예: `.../IDS.md`)인지 확인
+
+문제가 있으면 실행 위치(`cwd`)와 `IDS.md` 존재 경로를 먼저 점검하세요.
+
 ---
 
 ## 커맨드
@@ -57,6 +67,7 @@ pi install git:alphabeen/oh-my-jinho#v1.0.0
 | `/plan [주제]` | 실행 가능한 구현 계획 생성 (플레이스홀더 없음) |
 | `/ultraplan [주제]` | 복잡한 작업을 마일스톤 DAG로 분해 (5개 reviewer 병렬 실행) |
 | `/resume` | workspace별 이전 세션 목록을 보고 선택한 세션으로 진입한 뒤 작업 흐름을 이어감 |
+| `/mode` | 현재 IDS 모드 상태(active/inactive), 컨텍스트 파일, workflow snapshot 표시 |
 | `/reset-phase` | 워크플로우를 idle로 초기화 |
 
 ---

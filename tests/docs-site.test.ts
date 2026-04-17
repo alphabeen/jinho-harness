@@ -19,6 +19,7 @@ describe("Korean landing page", () => {
       'pi install git:alphabeen/oh-my-jinho',
       '/clarify [주제]',
       '/plan [주제]',
+      '/mode',
       '설치',
       '빠른 시작',
       '실무형 스킬 안내 (Option 3)',
@@ -29,6 +30,7 @@ describe("Korean landing page", () => {
       'IDS Soft Mode',
       '/resume은 어디까지 복원하나요?',
       'footer 지표는 어떻게 읽나요?',
+      '원점으로 돌아간 것 같아요. 무엇을 확인하나요?',
       '핵심 커맨드',
     ];
 
