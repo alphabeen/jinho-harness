@@ -33,6 +33,8 @@ import { MemoryDb, defaultDbPath } from "./memory.js";
 import {
   PROJECT_CONTEXT_CANDIDATES,
   buildIdsModeNotice,
+  buildLoadedMessage,
+  buildModeSummary,
   isIdsMode,
 } from "./ids-profile.js";
 
@@ -1148,6 +1150,21 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("mode", {
+    description: "Show IDS soft-mode status, detected context file, and workflow snapshot",
+    handler: async (_args, ctx) => {
+      const summary = buildModeSummary({
+        idsMode: idsModeActive,
+        cwd: ctx.cwd ?? "",
+        contextPath: projectContextPath,
+        phase: workflowState.phase,
+        lastTopic: workflowState.lastTopic,
+        lastArtifactPath: workflowState.lastArtifactPath,
+      });
+      ctx.ui.notify(summary, idsModeActive ? "info" : "warning");
+    },
+  });
+
   pi.on("agent_start", async () => {
     agentRunActive = true;
     assistantMessageCompleted = false;
@@ -1317,12 +1334,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Resumed ${workflowState.phase} workflow.`, "info");
     }
 
-    ctx.ui.notify(
-      idsModeActive
-        ? "oh-my-jinho (IDS mode) loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase"
-        : "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase",
-      "info"
-    );
+    ctx.ui.notify(buildLoadedMessage(idsModeActive), "info");
 
     if (event.reason === "resume") {
       const resumePrompt = getResumePromptForState(workflowState);
