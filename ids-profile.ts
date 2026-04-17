@@ -27,3 +27,31 @@ export function buildIdsModeNotice(idsMode: boolean): string {
   }
   return "IDS mode inactive: add IDS.md to enable IDS-first guidance automatically.";
 }
+
+export function buildLoadedMessage(idsMode: boolean): string {
+  return idsMode
+    ? "oh-my-jinho (IDS mode) loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase, /mode"
+    : "oh-my-jinho loaded: /clarify, /plan, /ultraplan, /resume, /reset-phase, /mode";
+}
+
+export function buildModeSummary(args: {
+  idsMode: boolean;
+  cwd: string;
+  contextPath: string | null;
+  phase: string;
+  lastTopic: string | null;
+  lastArtifactPath: string | null;
+}): string {
+  const contextLabel = args.contextPath ?? "(none)";
+  const lastTopic = args.lastTopic ?? "(none)";
+  const lastArtifact = args.lastArtifactPath ?? "(none)";
+
+  return [
+    `IDS mode: ${args.idsMode ? "active" : "inactive"}`,
+    `Workspace: ${args.cwd || "(unknown)"}`,
+    `Context file: ${contextLabel}`,
+    `Phase: ${args.phase}`,
+    `Last topic: ${lastTopic}`,
+    `Last artifact: ${lastArtifact}`,
+  ].join("\n");
+}

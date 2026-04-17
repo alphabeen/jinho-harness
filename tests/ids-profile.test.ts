@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   PROJECT_CONTEXT_CANDIDATES,
   buildIdsModeNotice,
+  buildLoadedMessage,
+  buildModeSummary,
   isIdsContextPath,
   isIdsMode,
   isLikelyIdsWorkspace,
@@ -33,5 +35,41 @@ describe("ids-profile", () => {
   it("builds startup notice for both mode states", () => {
     expect(buildIdsModeNotice(true)).toContain("IDS mode active");
     expect(buildIdsModeNotice(false)).toContain("IDS mode inactive");
+  });
+
+  it("builds loaded message for both IDS and generic mode", () => {
+    expect(buildLoadedMessage(true)).toContain("(IDS mode) loaded");
+    expect(buildLoadedMessage(true)).toContain("/mode");
+    expect(buildLoadedMessage(false)).toContain("oh-my-jinho loaded");
+    expect(buildLoadedMessage(false)).toContain("/mode");
+  });
+
+  it("builds mode summary with fallback placeholders", () => {
+    const summary = buildModeSummary({
+      idsMode: false,
+      cwd: "",
+      contextPath: null,
+      phase: "idle",
+      lastTopic: null,
+      lastArtifactPath: null,
+    });
+    expect(summary).toContain("IDS mode: inactive");
+    expect(summary).toContain("Workspace: (unknown)");
+    expect(summary).toContain("Context file: (none)");
+    expect(summary).toContain("Last topic: (none)");
+  });
+
+  it("builds mode summary with explicit values", () => {
+    const summary = buildModeSummary({
+      idsMode: true,
+      cwd: "C:/Users/wjdwl/ids_core",
+      contextPath: "C:/Users/wjdwl/ids_core/IDS.md",
+      phase: "planning",
+      lastTopic: "IDS 전용 플랜",
+      lastArtifactPath: "docs/engineering-discipline/plans/a.md",
+    });
+    expect(summary).toContain("IDS mode: active");
+    expect(summary).toContain("Context file: C:/Users/wjdwl/ids_core/IDS.md");
+    expect(summary).toContain("Phase: planning");
   });
 });
