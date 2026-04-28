@@ -1,3 +1,21 @@
+// ── .env 자동 로드 (harness 디렉토리의 .env 파일) ────────────────────────────
+import { readFileSync as _readFileSync } from "fs";
+import { join as _join, dirname as _dirname } from "path";
+import { fileURLToPath as _fileURLToPath } from "url";
+try {
+  const _envPath = _join(_dirname(_fileURLToPath(import.meta.url)), ".env");
+  for (const line of _readFileSync(_envPath, "utf-8").split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const idx = t.indexOf("=");
+    if (idx === -1) continue;
+    const k = t.slice(0, idx).trim();
+    const v = t.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+    if (k && !(k in process.env)) process.env[k] = v;
+  }
+} catch { /* .env 없으면 무시 */ }
+// ─────────────────────────────────────────────────────────────────────────────
+
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { keyHint, keyText, rawKeyHint, SessionManager } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
@@ -157,6 +175,56 @@ function getResumePromptForState(state: ExtensionState): string | null {
 }
 
 export default function (pi: ExtensionAPI) {
+  // ── Colab / Local LLM (llama.cpp) ──────────────────────────────────────────
+  // JINHO_LOCAL_LLM_URL=https://xxx.trycloudflare.com pi --model colab-llm/qwen3.5-27b-local
+  const LOCAL_LLM_URL = process.env.JINHO_LOCAL_LLM_URL;
+  if (LOCAL_LLM_URL) {
+    pi.registerProvider("colab-llm", {
+      baseUrl: LOCAL_LLM_URL.replace(/\/$/, "") + "/v1",
+      apiKey: "none",
+      authHeader: true,
+      api: "openai-completions",
+      models: [{
+        id: "qwen3.5-27b-local",
+        name: "Qwen3.5 27B (Colab/local)",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 32768,
+        maxTokens: 8192,
+        compat: {
+          supportsDeveloperRole: false,
+          maxTokensField: "max_tokens",
+          requiresToolResultName: true,
+        },
+      }],
+    });
+  }
+
+  // ── factchat (아주대 LLM 서비스, Gateway API) ───────────────────────────────
+  // 단일 엔드포인트로 모든 모델 사용: /v1/gateway/chat/completions/
+  // pi --model factchat/claude-sonnet-4-6
+  const FACTCHAT_API_KEY = process.env.JINHO_FACTCHAT_API_KEY;
+  if (FACTCHAT_API_KEY) {
+    const _noCache = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    const _compatStd = { supportsDeveloperRole: false, maxTokensField: "max_tokens" as const, requiresToolResultName: false };
+
+    pi.registerProvider("factchat", {
+      baseUrl: "https://factchat-cloud.mindlogic.ai/v1/gateway",
+      apiKey: FACTCHAT_API_KEY,
+      authHeader: true,
+      api: "openai-completions",
+      models: [
+        { id: "claude-sonnet-4-6",       name: "Claude Sonnet 4.6 (factchat)",  reasoning: false, input: ["text"], cost: _noCache, contextWindow: 200000, maxTokens: 8192, compat: _compatStd },
+        { id: "gpt-5.4",                 name: "GPT-5.4 (factchat)",            reasoning: false, input: ["text"], cost: _noCache, contextWindow: 128000, maxTokens: 8192, compat: _compatStd },
+        { id: "gpt-5.4-mini",            name: "GPT-5.4 Mini (factchat)",       reasoning: false, input: ["text"], cost: _noCache, contextWindow: 128000, maxTokens: 8192, compat: _compatStd },
+        { id: "gpt-5.4-nano",            name: "GPT-5.4 Nano (factchat)",       reasoning: false, input: ["text"], cost: _noCache, contextWindow: 128000, maxTokens: 8192, compat: _compatStd },
+        { id: "gemini-3.1-pro-preview",  name: "Gemini 3.1 Pro (factchat)",     reasoning: false, input: ["text"], cost: _noCache, contextWindow: 128000, maxTokens: 8192, compat: _compatStd },
+      ],
+    });
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const BUNDLED_AGENTS_DIR = join(__dirname, "agents");
   const BUNDLED_SKILLS_DIR = join(__dirname, "skills");
@@ -726,12 +794,77 @@ export default function (pi: ExtensionAPI) {
       ? "\n\n## IDS Focus Mode\n- Prioritize IDS.md constraints over generic defaults.\n- Follow clarify -> plan -> execute sequence.\n- Respect DDD layer boundaries and Phase 0 safety rules."
       : "";
 
+    // ── Colab/Local LLM: pi 기본 영문 프롬프트(~3000 토큰)를 짧은 한국어 프롬프트로 교체 ──
+    if (LOCAL_LLM_URL) {
+      const trimmedContext = projectContext
+        ? `\n\n## 프로젝트 컨텍스트 (${contextLabel})\n${projectContext.slice(0, 2000)}${projectContext.length > 2000 ? "\n...(이하 생략)" : ""}`
+        : "";
+      const phaseKo = guidance ? `\n\n## 현재 단계\n${guidance}` : "";
+      const idsKo = idsModeActive
+        ? "\n\n## IDS 모드\nIDS.md 제약 우선. DDD 레이어 경계 준수. Phase 0 안전 규칙 적용."
+        : "";
+      return {
+        systemPrompt:
+          "당신은 JINHO 에이전틱 코딩 하네스입니다.\n"
+          + "- 사용자가 한국어로 말하면 반드시 한국어로 대답하세요.\n"
+          + "- 코딩 작업을 돕는 AI 어시스턴트입니다.\n"
+          + "- 파일 읽기/쓰기, 코드 분석, 계획 수립을 수행합니다.\n"
+          + "- 절대로 <tool_call>, <function_call>, <|tool_call|> 등의 태그를 생성하지 마세요.\n"
+          + "- 도구 호출 없이 텍스트로만 직접 대답하세요.\n"
+          + "- 파일 내용이 필요하면 사용자에게 경로를 알려달라고 요청하세요."
+          + trimmedContext + idsKo + phaseKo,
+      };
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     return {
       systemPrompt: event.systemPrompt + contextBlock + memoryBlock + idsGuidance + (guidance || "") + delegationInfo,
     };
   });
 
   pi.on("context", async (event, _ctx) => {
+    // ── Colab/Local LLM 전용 content 포맷 변환 ─────────────────────────────
+    // 문제 1: pi는 user/system content를 [{type:"text",text:"..."}] 배열로 전송.
+    //         llama-cpp-python Jinja 템플릿은 plain string을 기대 → user 메시지 소실.
+    //         수정: user/system content를 문자열로 flatten.
+    // 문제 2: assistant history에 <think>...</think>가 남아 있으면
+    //         모델이 새 user 메시지가 없다고 판단함.
+    //         수정: assistant content 배열 안의 text block에서 think 제거.
+    //         (pi가 assistant content에 .flatMap() 호출 → 배열 형식은 유지해야 함)
+    if (LOCAL_LLM_URL) {
+      const flattenToString = (content: any): string => {
+        if (typeof content === "string") return content;
+        if (Array.isArray(content)) {
+          return content.filter((b: any) => b.type === "text").map((b: any) => b.text ?? "").join("");
+        }
+        return String(content ?? "");
+      };
+
+      const messages = event.messages.map((msg: any) => {
+        if (msg.role !== "assistant") {
+          return { ...msg, content: flattenToString(msg.content) };
+        }
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map((b: any) => {
+              if (b.type !== "text" || typeof b.text !== "string") return b;
+              const i = b.text.indexOf("</think>");
+              return i !== -1 ? { ...b, text: b.text.slice(i + 8).trimStart() } : b;
+            }),
+          };
+        }
+        if (typeof msg.content === "string") {
+          const i = msg.content.indexOf("</think>");
+          return i !== -1 ? { ...msg, content: msg.content.slice(i + 8).trimStart() } : msg;
+        }
+        return msg;
+      });
+
+      return { messages };
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const compacted = microcompactMessages(event.messages);
     const changed = compacted.some((msg, i) => msg !== event.messages[i]);
     if (!changed) return;
