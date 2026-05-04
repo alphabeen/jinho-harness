@@ -11,6 +11,10 @@ describe("runtime contract: critical commands and hooks", () => {
       'pi.registerCommand("plan"',
       'pi.registerCommand("resume"',
       'pi.registerCommand("mode"',
+      'name: "memory_search"',
+      'name: "memory_write"',
+      'name: "memory_recent"',
+      'name: "memory_recall"',
     ];
 
     for (const token of required) {

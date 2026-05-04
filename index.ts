@@ -411,7 +411,7 @@ export default function (pi: ExtensionAPI) {
           last_topic: params.title,
           last_artifact_path: result.artifactPath,
           resume_summary: params.title,
-          interrupted: false,
+          interrupted: 0,
           interrupted_reason: null,
         });
 

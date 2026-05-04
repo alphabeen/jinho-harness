@@ -72,6 +72,21 @@ pi 재시작 후 아래 순서로 확인하세요.
 
 ---
 
+### 장기 메모리 도구
+
+공용 장기 메모리는 세션 요약과 Context Brief를 `~/.pi/omj-memory.db`에 저장합니다.
+에이전트는 아래 도구를 사용해 과거 맥락을 남기고 다시 읽을 수 있습니다.
+
+- `memory_write` — Context Brief나 결정사항을 마크다운으로 저장
+- `memory_search` — 과거 세션 요약/메타데이터 검색
+- `memory_recent` — 최근 세션과 최근 요약 확인
+- `memory_recall` — 특정 세션 ID로 상태와 최근 맥락 회수
+
+추천 흐름:
+1. `/clarify`로 Context Brief를 만든다
+2. `memory_write`로 브리프를 영속 저장한다
+3. 필요할 때 `memory_search` / `memory_recall` / `memory_recent`로 다시 불러온다
+
 ## 프로젝트 컨텍스트 자동 주입
 
 프로젝트 루트(혹은 상위 디렉토리)에서 아래 순서로 컨텍스트 파일을 찾습니다.
