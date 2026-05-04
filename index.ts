@@ -62,6 +62,7 @@ let activeGoalDocument: string | null = workflowState.activeGoalDocument;
 let projectContext: string = "";
 let projectContextPath: string | null = null;
 let currentWorkspace = "";
+let currentSessionFile = "";
 let agentRunActive = false;
 let assistantMessageCompleted = false;
 let idsModeActive = false;
@@ -114,7 +115,7 @@ function persistWorkflowState(pi: ExtensionAPI, partial: Partial<ExtensionState>
   pi.appendEntry(SESSION_STATE_ENTRY_TYPE, next);
 
   try {
-    const sessionFile = pi.getSessionName?.() ?? "unknown";
+    const sessionFile = currentSessionFile || pi.getSessionName?.() || "unknown";
     getMemoryDb().upsertSession({
       session_id: sessionFile,
       workspace: currentWorkspace,
@@ -306,33 +307,174 @@ export default function (pi: ExtensionAPI) {
   });
 
   const MemorySearchParams = Type.Object({
-    query: Type.String({ description: "Keyword or phrase to search in past session summaries." }),
+    query: Type.String({ description: "Keyword or phrase to search in past session summaries and session metadata." }),
     limit: Type.Optional(Type.Number({ description: "Max results (default 5)." })),
   });
 
   pi.registerTool({
     name: "memory_search",
     label: "Search Long-Term Memory",
-    description: "Search past session summaries from the long-term memory DB.",
+    description: "Search past session summaries and session metadata from the long-term memory DB.",
     promptSnippet: "Search long-term memory for past context",
     promptGuidelines: [
       "Use memory_search when you need to recall past decisions, implementations, or context from previous sessions.",
+      "Search by file names, decisions, topic words, summary words, or keywords from a saved Context Brief.",
     ],
     parameters: MemorySearchParams,
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       try {
-        const results = getMemoryDb().searchSummaries(ctx.cwd ?? "", params.query, params.limit ?? 5);
-        if (results.length === 0) {
+        const workspace = ctx.cwd ?? "";
+        const limit = params.limit ?? 5;
+        const summaryMatches = getMemoryDb().searchSummaries(workspace, params.query, limit);
+        const sessionMatches = getMemoryDb().searchSessions(workspace, params.query, limit);
+
+        const blocks: string[] = [];
+
+        if (summaryMatches.length > 0) {
+          blocks.push(
+            summaryMatches.map((row, i) => {
+              let relatedFiles = "";
+              try {
+                const parsed = JSON.parse(row.related_files) as unknown;
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  relatedFiles = `\nRelated files: ${(parsed as unknown[]).map((value) => String(value)).slice(0, 5).join(", ")}`;
+                }
+              } catch {
+                // ignore malformed JSON payloads
+              }
+
+              return [
+                `--- Summary Match ${i + 1} [${row.created_at.slice(0, 10)}] ---`,
+                `Session: ${row.session_id}`,
+                `Workspace: ${row.workspace}`,
+                row.summary_text.slice(0, 800),
+                relatedFiles,
+              ].filter(Boolean).join("\n");
+            }).join("\n\n"),
+          );
+        }
+
+        if (sessionMatches.length > 0) {
+          blocks.push(
+            sessionMatches.map((row, i) => [
+              `--- Session Match ${i + 1} [${row.updated_at.slice(0, 10)}] ---`,
+              `Session: ${row.session_id}`,
+              `Workspace: ${row.workspace}`,
+              `Phase: ${row.phase}`,
+              `Last command: ${row.last_command ?? "none"}`,
+              `Last topic: ${row.last_topic ?? "none"}`,
+              `Last artifact: ${row.last_artifact_path ?? "none"}`,
+              `Summary: ${row.resume_summary ?? "none"}`,
+            ].join("\n")).join("\n\n"),
+          );
+        }
+
+        if (blocks.length === 0) {
           return { content: [{ type: "text", text: "No matching memory found." }], details: undefined };
         }
 
-        const text = results
-          .map((r, i) => `--- Memory ${i + 1} [${r.created_at.slice(0, 10)}] ---\n${r.summary_text.slice(0, 800)}`)
+        return { content: [{ type: "text", text: blocks.join("\n\n") }], details: undefined };
+      } catch (error) {
+        return { content: [{ type: "text", text: `memory_search error: ${String(error)}` }], details: undefined };
+      }
+    },
+  });
+
+  const MemoryWriteParams = Type.Object({
+    title: Type.String({ description: "Short title for the memory entry or Context Brief." }),
+    markdown: Type.String({ description: "Markdown content to persist as a durable memory artifact." }),
+    relatedFiles: Type.Optional(Type.Array(Type.String(), { description: "Related file paths referenced by the memory entry." })),
+  });
+
+  pi.registerTool({
+    name: "memory_write",
+    label: "Write Long-Term Memory",
+    description: "Persist a Context Brief or durable memory note as a markdown artifact and searchable summary.",
+    promptSnippet: "Write durable long-term memory as markdown",
+    promptGuidelines: [
+      "Use memory_write when a Context Brief, decision log, or durable note should be saved for future sessions.",
+      "Prefer markdown with headings and bullet points so the saved artifact is readable in later recalls.",
+    ],
+    parameters: MemoryWriteParams,
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      try {
+        const workspace = ctx.cwd ?? "";
+        const sessionFile = currentSessionFile || ctx.sessionManager.getSessionFile() || pi.getSessionName?.() || "unknown";
+        const relatedFiles = params.relatedFiles ?? [];
+        const result = getMemoryDb().writeContextBrief(sessionFile, workspace, params.title, params.markdown, relatedFiles);
+
+        getMemoryDb().upsertSession({
+          session_id: sessionFile,
+          workspace,
+          phase: workflowState.phase,
+          last_command: workflowState.lastCommand ?? "memory_write",
+          last_topic: params.title,
+          last_artifact_path: result.artifactPath,
+          resume_summary: params.title,
+          interrupted: false,
+          interrupted_reason: null,
+        });
+
+        return {
+          content: [{ type: "text", text: `Saved memory brief to ${relative(ctx.cwd ?? ".", result.artifactPath)}\nSummary id: ${result.summary.id}` }],
+          details: undefined,
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: `memory_write error: ${String(error)}` }], details: undefined };
+      }
+    },
+  });
+
+  const MemoryRecentParams = Type.Object({
+    limit: Type.Optional(Type.Number({ description: "Max results to return (default 5)." })),
+  });
+
+  pi.registerTool({
+    name: "memory_recent",
+    label: "Recent Long-Term Memory",
+    description: "List the most recent sessions and summaries from the long-term memory DB.",
+    promptSnippet: "Inspect recent long-term memory entries",
+    promptGuidelines: [
+      "Use memory_recent when you need the latest session state, recent summaries, or the freshest Context Briefs.",
+    ],
+    parameters: MemoryRecentParams,
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      try {
+        const workspace = ctx.cwd ?? "";
+        const limit = params.limit ?? 5;
+        const sessions = getMemoryDb().recentSessions(workspace, limit);
+        const summaries = getMemoryDb().recentSummariesForWorkspace(workspace, limit);
+
+        const sessionBlock = sessions.length > 0
+          ? sessions.map((row, i) => [
+              `--- Session ${i + 1} [${row.updated_at.slice(0, 10)}] ---`,
+              `Session: ${row.session_id}`,
+              `Phase: ${row.phase}`,
+              `Topic: ${row.last_topic ?? "none"}`,
+              `Artifact: ${row.last_artifact_path ?? "none"}`,
+              `Summary: ${row.resume_summary ?? "none"}`,
+            ].join("\n")).join("\n\n")
+          : "";
+
+        const summaryBlock = summaries.length > 0
+          ? summaries.map((row, i) => [
+              `--- Summary ${i + 1} [${row.created_at.slice(0, 10)}] ---`,
+              `Session: ${row.session_id}`,
+              row.summary_text.slice(0, 600),
+            ].join("\n")).join("\n\n")
+          : "";
+
+        const text = [sessionBlock ? `## Recent Sessions\n${sessionBlock}` : "", summaryBlock ? `## Recent Summaries\n${summaryBlock}` : ""]
+          .filter(Boolean)
           .join("\n\n");
+
+        if (!text) {
+          return { content: [{ type: "text", text: "No recent memory found." }], details: undefined };
+        }
 
         return { content: [{ type: "text", text }], details: undefined };
       } catch (error) {
-        return { content: [{ type: "text", text: `memory_search error: ${String(error)}` }], details: undefined };
+        return { content: [{ type: "text", text: `memory_recent error: ${String(error)}` }], details: undefined };
       }
     },
   });
@@ -348,14 +490,30 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Recall a specific past session from long-term memory",
     promptGuidelines: [
       "Use memory_recall to get detailed information about a specific past session.",
+      "If the exact session ID is unknown, use memory_search or memory_recent first.",
     ],
     parameters: MemoryRecallParams,
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       try {
-        const session = getMemoryDb().recallSession(params.session_id);
+        const workspace = ctx.cwd ?? "";
+        const exact = getMemoryDb().recallSession(params.session_id);
+        const session = exact ?? getMemoryDb().searchSessions(workspace, params.session_id, 1)[0] ?? null;
         if (!session) {
           return { content: [{ type: "text", text: `No session found for ID: ${params.session_id}` }], details: undefined };
         }
+
+        const latestSummary = getMemoryDb()
+          .searchSummaries(session.workspace, session.session_id, 5)
+          .find((row) => row.session_id === session.session_id) ?? null;
+
+        const relatedFiles = latestSummary ? (() => {
+          try {
+            const parsed = JSON.parse(latestSummary.related_files) as unknown;
+            return Array.isArray(parsed) && parsed.length > 0 ? `\nRelated files: ${(parsed as unknown[]).map((value) => String(value)).join(", ")}` : "";
+          } catch {
+            return "";
+          }
+        })() : "";
 
         const text = [
           `Session: ${session.session_id}`,
@@ -367,6 +525,8 @@ export default function (pi: ExtensionAPI) {
           `Interrupted: ${session.interrupted ? "yes" : "no"}`,
           `Updated: ${session.updated_at}`,
           session.resume_summary ? `Summary: ${session.resume_summary}` : "",
+          latestSummary ? `Latest memory snippet:\n${latestSummary.summary_text.slice(0, 800)}` : "",
+          relatedFiles,
         ].filter(Boolean).join("\n");
 
         return { content: [{ type: "text", text }], details: undefined };
@@ -771,12 +931,48 @@ export default function (pi: ExtensionAPI) {
 
     let memoryBlock = "";
     try {
-      const recentSummaries = getMemoryDb().recentSummariesForWorkspace(_ctx.cwd ?? "", 3);
+      const workspace = _ctx.cwd ?? "";
+      const recentSessions = getMemoryDb().recentSessions(workspace, 3);
+      const recentSummaries = getMemoryDb().recentSummariesForWorkspace(workspace, 3);
+
+      const sections: string[] = [];
+
+      if (recentSessions.length > 0) {
+        const sessionLines = recentSessions.map((row, i) => [
+          `### Session ${i + 1} (${row.updated_at.slice(0, 10)})`,
+          `Session: ${row.session_id}`,
+          `Phase: ${row.phase}`,
+          `Topic: ${row.last_topic ?? "none"}`,
+          `Artifact: ${row.last_artifact_path ?? "none"}`,
+          `Summary: ${row.resume_summary ?? "none"}`,
+        ].join("\n"));
+        sections.push(`## Recent Sessions\n${sessionLines.join("\n\n")}`);
+      }
+
       if (recentSummaries.length > 0) {
-        const lines = recentSummaries.map((s, i) => (
-          `### Memory ${i + 1} (${s.created_at.slice(0, 10)})\n${s.summary_text.slice(0, 600)}`
-        ));
-        memoryBlock = `\n\n## Long-Term Memory (recent sessions)\n${lines.join("\n\n")}`;
+        const summaryLines = recentSummaries.map((row, i) => {
+          let relatedFiles = "";
+          try {
+            const parsed = JSON.parse(row.related_files) as unknown;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              relatedFiles = `\nRelated files: ${(parsed as unknown[]).map((value) => String(value)).slice(0, 5).join(", ")}`;
+            }
+          } catch {
+            // ignore malformed JSON payloads
+          }
+
+          return [
+            `### Memory ${i + 1} (${row.created_at.slice(0, 10)})`,
+            `Session: ${row.session_id}`,
+            row.summary_text.slice(0, 600),
+            relatedFiles,
+          ].filter(Boolean).join("\n");
+        });
+        sections.push(`## Recent Summaries\n${summaryLines.join("\n\n")}`);
+      }
+
+      if (sections.length > 0) {
+        memoryBlock = `\n\n## Long-Term Memory\n${sections.join("\n\n")}`;
       }
     } catch {
       // Non-fatal: prompt proceeds without memory injection.
@@ -1068,8 +1264,8 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("JINHO", "Clarification in progress...");
 
       const prompt = topic
-        ? `The user wants to clarify the following task: "${topic}"\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool.\n- Use the subagent tool with agent 'explorer' to investigate the relevant codebase area in parallel.\n- Build up a clear Context Brief.`
-        : `The user wants to start an agentic-clarification session.\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool to understand what the user wants to accomplish.\n- Use the subagent tool with agent 'explorer' to investigate the codebase in parallel.\n- Build up a clear Context Brief.`;
+        ? `The user wants to clarify the following task: "${topic}"\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool.\n- Use the subagent tool with agent 'explorer' to investigate the relevant codebase area in parallel.\n- Build up a clear Context Brief.\n- When the brief is complete, save it with memory_write so it persists as markdown.`
+        : `The user wants to start an agentic-clarification session.\n\nBegin the agentic-clarification process. Follow the agentic-clarification skill rules.\n- Ask ONE question using the ask_user_question tool to understand what the user wants to accomplish.\n- Use the subagent tool with agent 'explorer' to investigate the codebase in parallel.\n- Build up a clear Context Brief.\n- When the brief is complete, save it with memory_write so it persists as markdown.`;
 
       pi.sendUserMessage(prompt);
     },
@@ -1098,8 +1294,8 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("JINHO", "Agentic planning workflow in progress...");
 
       const prompt = topic
-        ? `Create an executable implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- Each step must specify: exact file path, what changes, why.\n- Every step must be concrete — no placeholders like 'implement the service'.`
-        : `Create an executable implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm scope and approach.\n- Each step must be concrete — no placeholders.\n- End with a Self-Review.`;
+        ? `Create an executable implementation plan for: "${topic}"\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If you need older decisions, use memory_search or memory_recall before drafting the plan.\n- Each step must specify: exact file path, what changes, why.\n- Every step must be concrete — no placeholders like 'implement the service'.`
+        : `Create an executable implementation plan for the current task.\n\nFollow the agentic-plan-crafting skill rules.\n- If a Context Brief exists from a previous /clarify, use it as input.\n- If not, use ask_user_question to confirm scope and approach.\n- If you need older decisions, use memory_search or memory_recall before drafting the plan.\n- Each step must be concrete — no placeholders.\n- End with a Self-Review.`;
 
       pi.sendUserMessage(prompt);
     },
@@ -1371,7 +1567,8 @@ export default function (pi: ExtensionAPI) {
     currentWorkspace = ctx.cwd ?? "";
 
     try {
-      const sessionFile = ctx.sessionManager.getSessionFile() ?? "unknown";
+      currentSessionFile = ctx.sessionManager.getSessionFile() ?? pi.getSessionName?.() ?? "unknown";
+      const sessionFile = currentSessionFile;
       getMemoryDb().upsertSession({
         session_id: sessionFile,
         workspace: currentWorkspace,
